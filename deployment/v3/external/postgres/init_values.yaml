@@ -94,13 +94,13 @@ databases:
 
   mosip_esignet:
     enabled: false
-    branch: "v1.6.2"
+    branch: "v1.4.1"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_mockidentitysystem:
     enabled: false
-    branch: "v0.11.2"
+    branch: "v0.9.3"
     host: "postgres-postgresql.postgres"
     port: 5432
 
