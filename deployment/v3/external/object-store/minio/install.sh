@@ -17,8 +17,8 @@ function installing_minio() {
   echo Installing minio
   helm -n minio install minio mosip/minio \
   --set image.repository="mosipid/minio" \
-  --set image.tag="2022.2.7-debian-10-r0" \
-  -f values.yaml --version 10.1.6
+  --set image.tag="2025.2.28-debian-12-r1" \
+  -f values.yaml --version 15.0.6
 
   echo Installing gateways and virtualservice
   helm -n $NS install istio-addons mosip/istio-addons --version $ISTIO_ADDONS_CHART_VERSION -f istio-addons-values.yaml
