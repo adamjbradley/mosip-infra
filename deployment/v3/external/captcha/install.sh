@@ -33,7 +33,7 @@ function secret_setup() {
 
   while true; do
     read -p "Do you want to continue configuring Captcha secrets for admin ? (y/n) : " ans
-      if [ "$ans" ='Y' ] || [ "$ans" = 'y' ]; then
+      if [ "$ans" = 'Y' ] || [ "$ans" = 'y' ]; then
         echo "Please create captcha site and secret key for admin domain: admin.sandbox.xyz.net"
 
         ADMIN_HOST=$(kubectl get cm global -o jsonpath={.data.mosip-admin-host})

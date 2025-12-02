@@ -16,7 +16,7 @@ function installing_captcha() {
 
   while true; do
       read -p "Do you want to continue installing captcha validation service? (y/n): " ans
-      if [ "$ans" = "Y" ] || [ "$ans" = "y" ]; then
+      if [ "$ans" = 'Y' ] || [ "$ans" = 'y' ]; then
           break
       elif [ "$ans" = "N" ] || [ "$ans" = "n" ]; then
           exit 1
