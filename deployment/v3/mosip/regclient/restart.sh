@@ -6,6 +6,7 @@ if [ $# -ge 1 ] ; then
   export KUBECONFIG=$1
 fi
 
+
 function Restarting_regclient() {
   NS=regclient
   kubectl -n $NS rollout restart deploy
