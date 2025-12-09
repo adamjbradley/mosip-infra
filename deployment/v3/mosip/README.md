@@ -18,8 +18,6 @@ Install in the following order:
 * [Artifactory](artifactory/README.md)
 * [Key Manager](keymanager/README.md)
 * [WebSub](websub/README.md)
-* [Masterdata-loader](masterdata-loader/README.md)
-* [Kernel](kernel/README.md)
 * [Masterdata-loader](masterdata-loader/)
 * [Kernel](kernel/README.md)
 * [Mock Biosdk](biosdk/README.md)
