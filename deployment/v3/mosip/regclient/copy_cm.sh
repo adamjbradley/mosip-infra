@@ -6,7 +6,7 @@ function copying_cm() {
   COPY_UTIL=../../utils/copy_cm_func.sh
   DST_NS=regclient
 
-  $COPY_UTIL configmap artifactory-share artifactory $DST_NS
+  $COPY_UTIL configmap artifactory-share artifactory-1202 $DST_NS
   return 0
 }
 
