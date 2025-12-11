@@ -137,6 +137,7 @@ registration-processor-default.properties,mosip.regproc.supervisor-validator.eve
 registration-processor-default.properties,mosip.regproc.credentialrequestor.eventbus.kafka.commit.type
 registration-processor-default.properties,mosip.regproc.credentialrequestor.eventbus.kafka.max.poll.records
 registration-processor-default.properties,auth.server.admin.allowed.audience
+registration-processor-default.properties,DIGITALSIGNATURE
 id-authentication-default.properties,hibernate.dialect
 id-authentication-default.properties,mosip.ida.mapping.json-uri
 resident-default.properties,mosip.resident.eventid.searchtext.length
