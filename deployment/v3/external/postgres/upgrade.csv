@@ -41,7 +41,8 @@ mosip_master,1.2.0.1,1.2.1.0,upgrade
 mosip_master,1.2.1.0,1.2.1.1,upgrade
 mosip_master,1.2.1.1,1.2.1.2,upgrade
 mosip_master,1.2.1.2,1.2.1.3,upgrade
-mosip_master,1.2.1.3,1.3.0,upgrade
+mosip_master,1.2.1.3,1.2.1.4,upgrade
+mosip_master,1.2.1.4,1.3.0,upgrade
 mosip_keymgr,1.2.0.1,1.2.1.0,upgrade
 mosip_keymgr,1.2.1.0,1.3.0,upgrade
 mosip_audit,1.2.0.1,1.3.0,upgrade
@@ -53,6 +54,7 @@ mosip_hotlist,1.2.0.1,1.2.1.0,upgrade
 mosip_hotlist,1.2.1.0,1.2.1.1,upgrade
 mosip_hotlist,1.2.1.1,1.2.1.2,upgrade
 mosip_hotlist,1.2.1.2,1.2.1.3,upgrade
-mosip_hotlist,1.2.1.3,1.3.0,upgrade
+mosip_hotlist,1.2.1.3,1.2.1.4,upgrade
+mosip_hotlist,1.2.1.4,1.3.0,upgrade
 mosip_otp,1.2.0.1,1.3.0,upgrade
 mosip_digitalcard,1.2.0.1,1.3.0,upgrade
