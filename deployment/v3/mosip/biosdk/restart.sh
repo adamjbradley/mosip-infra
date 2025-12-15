@@ -1,5 +1,5 @@
 #!/bin/bash
-# Restart the artifactory service
+# Restart the biosdk service
 ## Usage: ./restart.sh [kubeconfig]
 
 if [ $# -ge 1 ] ; then
