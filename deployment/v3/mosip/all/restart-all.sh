@@ -28,7 +28,7 @@ function Restarting_all() {
                      "admin"
                      "ida"
                      "print"
-		     "digitalcard"
+                     "digitalcard"
                      "mosip-file-server"
                      "resident"
                      "regclient"

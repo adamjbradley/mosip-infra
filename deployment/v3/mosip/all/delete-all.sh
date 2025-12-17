@@ -14,7 +14,7 @@ function Deleting_all() {
                      "prereg"
                      "admin"
                      "idrepo"
-		     "digitalcard"
+                     "digitalcard"
                      "print"
                      "ida"
                      "packetmanager"
