@@ -1,6 +1,0 @@
-regclient:
-  version: 1.2.0.2
-image:
-  registry: docker.io
-  repository: mosipid/registration-client
-  tag: 1.2.0.2
