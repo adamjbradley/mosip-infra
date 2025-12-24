@@ -4,61 +4,61 @@ dbUserPasswords:
 databases:
   mosip_master:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_audit:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_keymgr:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_kernel:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_idmap:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_prereg:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_idrepo:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_ida:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_credential:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_regprc:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
@@ -70,25 +70,25 @@ databases:
 
   mosip_hotlist:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_resident:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_otp:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
   mosip_digitalcard:
     enabled: true
-    branch: "release-1.3.x"
+    branch: "v1.3.0"
     host: "postgres-postgresql.postgres"
     port: 5432
 
@@ -101,6 +101,12 @@ databases:
   mosip_mockidentitysystem:
     enabled: false
     branch: "v0.9.3"
+    host: "postgres-postgresql.postgres"
+    port: 5432
+
+  mosip_toolkit:
+    enabled: false
+    branch: "v1.4.2"
     host: "postgres-postgresql.postgres"
     port: 5432
 
