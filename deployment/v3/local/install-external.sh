@@ -39,6 +39,21 @@ copy_standard_cms() {
   copy_cm config-server-share config-server "$ns" 2>/dev/null || true
 }
 
+add_helm_repos() {
+  echo "Adding Helm repos..."
+  helm repo add mosip https://mosip.github.io/mosip-helm 2>/dev/null || true
+  helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
+  helm repo update
+}
+
+# ---------- ingress ----------
+
+install_ingress() {
+  echo "=== Applying MOSIP ingress resources ==="
+  kubectl apply -f "$SCRIPT_DIR/ingress-mosip.yaml"
+  echo "Ingress resources applied."
+}
+
 # ---------- global configmap ----------
 
 install_global_configmap() {
@@ -257,6 +272,7 @@ case "$COMPONENT" in
   activemq)     install_activemq ;;
   kafka)        install_kafka ;;
   all)
+    add_helm_repos
     install_global_configmap
     install_postgres
     install_keycloak
@@ -269,6 +285,7 @@ case "$COMPONENT" in
     install_docker_secrets
     install_captcha_secret
     install_landing_page
+    install_ingress
     echo ""
     echo "All MOSIP external components installed."
     echo "Use 'kubectl get pods -A' to check status."

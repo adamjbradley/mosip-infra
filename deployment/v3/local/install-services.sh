@@ -34,6 +34,12 @@ REQ_MEM=64Mi
 LIM_CPU=500m
 LIM_MEM=1Gi
 
+add_helm_repos() {
+  echo "Adding Helm repos..."
+  helm repo add mosip https://mosip.github.io/mosip-helm 2>/dev/null || true
+  helm repo update
+}
+
 # ---------- helpers ----------
 
 ensure_ns() {
@@ -479,6 +485,7 @@ case "$COMPONENT" in
   ida)              install_ida ;;
   resident)         install_resident ;;
   all)
+    add_helm_repos
     install_conf_secrets
     install_config_server
     install_artifactory
