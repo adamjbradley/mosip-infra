@@ -53,9 +53,35 @@ add_helm_repos() {
 
 # ---------- ingress ----------
 
+# Create keycloak-host configmap in default namespace for services to copy.
+install_keycloak_host_cm() {
+  echo "=== Creating keycloak-host configmap ==="
+  kubectl create configmap keycloak-host \
+    --from-literal=keycloak-internal-url="http://keycloak.keycloak/auth" \
+    --from-literal=keycloak-internal-host="keycloak.keycloak" \
+    --from-literal=keycloak-external-url="http://iam.mosip.localhost:30080/auth" \
+    --from-literal=keycloak-external-host="iam.mosip.localhost" \
+    --dry-run=client -o yaml | kubectl apply -f -
+}
+
 install_ingress() {
   echo "=== Applying MOSIP ingress resources ==="
-  kubectl apply -f "$SCRIPT_DIR/ingress-mosip.yaml"
+  # Apply each ingress resource only if its namespace exists.
+  # This allows minimal/core profiles to skip resources for uninstalled components.
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  # Split multi-doc YAML into individual files
+  awk 'BEGIN{n=0} /^---/{n++; next} {print > ("'"$tmpdir"'/doc-" n ".yaml")}' "$SCRIPT_DIR/ingress-mosip.yaml"
+  for f in "$tmpdir"/doc-*.yaml; do
+    local ns
+    ns=$(grep '^ *namespace:' "$f" 2>/dev/null | head -1 | awk '{print $2}')
+    if [ -n "$ns" ] && kubectl get ns "$ns" &>/dev/null; then
+      kubectl apply -f "$f"
+    else
+      echo "  Skipping ingress for namespace '$ns' (not deployed)"
+    fi
+  done
+  rm -rf "$tmpdir"
   echo "Ingress resources applied."
 }
 
@@ -275,7 +301,9 @@ case "$COMPONENT" in
     install_global_configmap
     install_postgres
     install_keycloak
+    install_keycloak_host_cm
     install_softhsm
+    install_ingress
     echo ""
     echo "Minimal external components installed (postgres, keycloak, softhsm)."
     echo "Use './install-external.sh core' to add kafka, minio, activemq."
@@ -285,6 +313,7 @@ case "$COMPONENT" in
     install_global_configmap
     install_postgres
     install_keycloak
+    install_keycloak_host_cm
     install_softhsm
     install_kafka
     install_minio
@@ -299,6 +328,7 @@ case "$COMPONENT" in
     install_global_configmap
     install_postgres
     install_keycloak
+    install_keycloak_host_cm
     install_softhsm
     install_kafka
     install_minio

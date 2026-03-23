@@ -65,6 +65,21 @@ copy_standard_cms() {
   copy_cm global default "$ns"
   copy_cm artifactory-share artifactory "$ns" 2>/dev/null || true
   copy_cm config-server-share config-server "$ns" 2>/dev/null || true
+  copy_cm keycloak-host default "$ns" 2>/dev/null || true
+  ensure_db_secret "$ns"
+}
+
+# Create db-common-secrets in a namespace from the postgres password.
+# Many MOSIP charts mount this secret for database connectivity.
+ensure_db_secret() {
+  local ns=$1
+  if ! kubectl -n "$ns" get secret db-common-secrets &>/dev/null; then
+    local pg_pass
+    pg_pass=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d)
+    kubectl -n "$ns" create secret generic db-common-secrets \
+      --from-literal=db-dbuser-password="$pg_pass" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  fi
 }
 
 # Install a simple MOSIP helm chart with JVM override and minimal resources.
@@ -116,6 +131,8 @@ install_config_server() {
   local NS=config-server
   ensure_ns $NS
   copy_cm global default $NS
+  copy_cm keycloak-host default $NS 2>/dev/null || true
+  ensure_db_secret $NS
   helm upgrade --install config-server mosip/config-server \
     -n $NS --version $CHART_VERSION \
     --set resources.requests.cpu=10m \
@@ -128,6 +145,10 @@ install_config_server() {
     --set 'spring_profiles.spring_compositeRepos[0].version=v1.3.0' \
     --timeout 5m
   patch_jvm $NS config-server
+
+  echo "  Waiting for config-server to be ready (may take 2-3 min)..."
+  kubectl -n $NS rollout status deploy/config-server --timeout=300s || true
+  kubectl -n $NS wait --for=condition=ready pod -l app.kubernetes.io/name=config-server --timeout=300s || true
 }
 
 # ---------- 3. artifactory ----------
