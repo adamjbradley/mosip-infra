@@ -3,11 +3,16 @@
 # Follows the sequence from mosip-infra/deployment/v3/external/all/install-all.sh
 # but adapted for local dev (no Istio, reduced resources, hostpath storage).
 #
-# Prerequisites:
-#   - k8s-infra local setup already running (./setup.sh)
-#   - mosip helm repo added (helm repo add mosip https://mosip.github.io/mosip-helm)
+# Profiles:
+#   minimal — postgres + keycloak + softhsm (~1.5GB RAM)
+#   core    — + kafka + minio + activemq (~3.5GB RAM)
+#   all     — + clamav + msg-gateways + captcha (~5GB RAM)
 #
-# Usage: ./install-external.sh [component|teardown]
+# Prerequisites:
+#   - k8s-infra local setup already running (k8s-infra/local/setup.sh minimal)
+#   - helm, kubectl on PATH
+#
+# Usage: ./install-external.sh [minimal|core|all|component|teardown]
 
 set -e
 set -o errexit
@@ -264,23 +269,41 @@ case "$COMPONENT" in
   teardown)
     teardown
     ;;
-  postgres)     install_postgres ;;
-  keycloak)     install_keycloak ;;
-  softhsm)      install_softhsm ;;
-  minio)        install_minio ;;
-  clamav)       install_clamav ;;
-  activemq)     install_activemq ;;
-  kafka)        install_kafka ;;
+  # --- profiles ---
+  minimal)
+    add_helm_repos
+    install_global_configmap
+    install_postgres
+    install_keycloak
+    install_softhsm
+    echo ""
+    echo "Minimal external components installed (postgres, keycloak, softhsm)."
+    echo "Use './install-external.sh core' to add kafka, minio, activemq."
+    ;;
+  core)
+    add_helm_repos
+    install_global_configmap
+    install_postgres
+    install_keycloak
+    install_softhsm
+    install_kafka
+    install_minio
+    install_activemq
+    install_ingress
+    echo ""
+    echo "Core external components installed."
+    echo "Use './install-external.sh all' to add clamav, msg-gateways, captcha."
+    ;;
   all)
     add_helm_repos
     install_global_configmap
     install_postgres
     install_keycloak
     install_softhsm
-    install_minio
-    install_clamav
-    install_activemq
     install_kafka
+    install_minio
+    install_activemq
+    install_clamav
     install_msg_gateways
     install_docker_secrets
     install_captcha_secret
@@ -288,11 +311,23 @@ case "$COMPONENT" in
     install_ingress
     echo ""
     echo "All MOSIP external components installed."
-    echo "Use 'kubectl get pods -A' to check status."
     ;;
+  # --- individual components ---
+  postgres)     install_postgres ;;
+  keycloak)     install_keycloak ;;
+  softhsm)      install_softhsm ;;
+  minio)        install_minio ;;
+  clamav)       install_clamav ;;
+  activemq)     install_activemq ;;
+  kafka)        install_kafka ;;
   *)
     echo "Unknown component: $COMPONENT"
-    echo "Usage: $0 [all|postgres|keycloak|softhsm|minio|clamav|activemq|kafka|teardown]"
+    echo "Usage: $0 [minimal|core|all|postgres|keycloak|softhsm|minio|clamav|activemq|kafka|teardown]"
+    echo ""
+    echo "Profiles:"
+    echo "  minimal — postgres + keycloak + softhsm (~1.5GB RAM)"
+    echo "  core    — + kafka + minio + activemq (~3.5GB RAM)"
+    echo "  all     — + clamav + msg-gateways + captcha (~5GB RAM)"
     exit 1
     ;;
 esac

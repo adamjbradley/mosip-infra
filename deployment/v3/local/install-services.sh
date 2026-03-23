@@ -4,11 +4,17 @@
 # but adapted for local dev: reduced JVM heap, minimal resource requests,
 # no Istio sidecars, skip SSL cert init containers.
 #
-# Prerequisites:
-#   - MOSIP external components running (./mosip-external.sh)
-#   - config-server, artifactory, keymanager already deployed
+# Profiles:
+#   minimal — config-server + kernel + idrepo + keymanager (~6GB RAM, ~13 pods)
+#   core    — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM, ~21 pods)
+#   all     — + regproc + prereg + admin + pms + mock-abis + resident (~16GB RAM, ~29 pods)
 #
-# Usage: ./install-services.sh [component|teardown|status]
+# Prerequisites:
+#   - MOSIP external components running (./install-external.sh)
+#   - For minimal: ./install-external.sh minimal
+#   - For core/all: ./install-external.sh core (needs kafka, minio, activemq)
+#
+# Usage: ./install-services.sh [minimal|core|all|component|teardown|status]
 
 set -e
 set -o errexit
@@ -464,26 +470,40 @@ teardown() {
 case "$COMPONENT" in
   teardown) teardown ;;
   status)   show_status ;;
-  conf-secrets)     install_conf_secrets ;;
-  config-server)    install_config_server ;;
-  artifactory)      install_artifactory ;;
-  captcha)          install_captcha ;;
-  keymanager)       install_keymanager ;;
-  websub)           install_websub ;;
-  mock-smtp)        install_mock_smtp ;;
-  kernel)           install_kernel ;;
-  masterdata-loader) install_masterdata_loader ;;
-  biosdk)           install_biosdk ;;
-  packetmanager)    install_packetmanager ;;
-  datashare)        install_datashare ;;
-  prereg)           install_prereg ;;
-  idrepo)           install_idrepo ;;
-  pms)              install_pms ;;
-  mock-abis)        install_mock_abis ;;
-  regproc)          install_regproc ;;
-  admin)            install_admin ;;
-  ida)              install_ida ;;
-  resident)         install_resident ;;
+  # --- profiles ---
+  minimal)
+    add_helm_repos
+    install_conf_secrets
+    install_config_server
+    install_artifactory
+    install_keymanager
+    install_kernel
+    install_idrepo
+    echo ""
+    echo "Minimal MOSIP services installed (config-server, kernel, idrepo, keymanager)."
+    echo "Requires: ./install-external.sh minimal"
+    echo "Use './install-services.sh core' to add websub, biosdk, ida, etc."
+    show_status
+    ;;
+  core)
+    add_helm_repos
+    install_conf_secrets
+    install_config_server
+    install_artifactory
+    install_keymanager
+    install_websub
+    install_kernel
+    install_biosdk
+    install_packetmanager
+    install_datashare
+    install_idrepo
+    install_ida
+    echo ""
+    echo "Core MOSIP services installed (+ websub, biosdk, packetmanager, datashare, ida)."
+    echo "Requires: ./install-external.sh core"
+    echo "Use './install-services.sh all' to add regproc, prereg, admin, pms, resident."
+    show_status
+    ;;
   all)
     add_helm_repos
     install_conf_secrets
@@ -510,9 +530,35 @@ case "$COMPONENT" in
     echo "All MOSIP core services installed."
     show_status
     ;;
+  # --- individual components ---
+  conf-secrets)     install_conf_secrets ;;
+  config-server)    install_config_server ;;
+  artifactory)      install_artifactory ;;
+  captcha)          install_captcha ;;
+  keymanager)       install_keymanager ;;
+  websub)           install_websub ;;
+  mock-smtp)        install_mock_smtp ;;
+  kernel)           install_kernel ;;
+  masterdata-loader) install_masterdata_loader ;;
+  biosdk)           install_biosdk ;;
+  packetmanager)    install_packetmanager ;;
+  datashare)        install_datashare ;;
+  prereg)           install_prereg ;;
+  idrepo)           install_idrepo ;;
+  pms)              install_pms ;;
+  mock-abis)        install_mock_abis ;;
+  regproc)          install_regproc ;;
+  admin)            install_admin ;;
+  ida)              install_ida ;;
+  resident)         install_resident ;;
   *)
     echo "Unknown component: $COMPONENT"
-    echo "Usage: $0 [all|status|teardown|<component-name>]"
+    echo "Usage: $0 [minimal|core|all|status|teardown|<component-name>]"
+    echo ""
+    echo "Profiles:"
+    echo "  minimal — config-server + kernel + idrepo + keymanager (~6GB RAM)"
+    echo "  core    — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM)"
+    echo "  all     — + regproc + prereg + admin + pms + resident (~16GB RAM)"
     exit 1
     ;;
 esac

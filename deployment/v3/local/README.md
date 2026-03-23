@@ -1,24 +1,62 @@
 # Local Development Setup
 
-Scripts and value overrides for running the full MOSIP stack on Docker Desktop Kubernetes.
+Scripts and value overrides for running the MOSIP stack on Docker Desktop Kubernetes.
 
 ## Prerequisites
 
-- Docker Desktop with Kubernetes enabled (24GB+ RAM recommended)
+- Docker Desktop with Kubernetes enabled
 - `kubectl`, `helm` on PATH
-- k8s-infra local setup running (`k8s-infra/local/setup.sh`) — provides ingress-nginx
-- Helm repo added: `helm repo add mosip https://mosip.github.io/mosip-helm && helm repo update`
+- k8s-infra local setup running: `k8s-infra/local/setup.sh minimal`
+
+## Profiles
+
+Pick a profile based on your machine's RAM. All scripts support `minimal`, `core`, and `all`.
+
+| Machine RAM | k8s-infra | external | services | What you get |
+|-------------|-----------|----------|----------|--------------|
+| 8GB | `minimal` | `minimal` | `minimal` | Identity store + kernel APIs |
+| 16GB | `dev` | `core` | `core` | + ID verification + data pipeline |
+| 24GB+ | `all` | `all` | `all` | Full stack incl. registration + portals |
+
+### External component profiles
+
+| Profile | Components | ~RAM |
+|---------|-----------|------|
+| `minimal` | postgres, keycloak, softhsm | ~1.5GB |
+| `core` | + kafka, minio, activemq | ~3.5GB |
+| `all` | + clamav, msg-gateways, captcha | ~5GB |
+
+### Service profiles
+
+| Profile | Services | ~RAM |
+|---------|----------|------|
+| `minimal` | config-server, kernel (9), idrepo (3), keymanager | ~6GB |
+| `core` | + websub, biosdk, packetmanager, datashare, ida (3) | ~10GB |
+| `all` | + regproc (6), prereg (4), admin, pms, mock-abis, resident | ~16GB |
 
 ## Quick Start
 
 ```bash
-# 1. Install external components (postgres, keycloak, kafka, activemq, etc.)
-./install-external.sh
+# Minimal (8GB machine) — identity store + kernel APIs
+cd k8s-infra/local && ./setup.sh minimal
+cd mosip-infra/deployment/v3/local
+./install-external.sh minimal
+./install-services.sh minimal
 
-# 2. Install MOSIP core services (kernel, idrepo, ida, regproc, etc.)
-./install-services.sh
+# Core (16GB machine) — adds ID auth, data pipeline
+./install-external.sh core
+./install-services.sh core
 
-# 3. Check health
+# Full (24GB+ machine) — everything
+./install-external.sh all
+./install-services.sh all
+```
+
+Profiles are additive — `helm upgrade --install` is idempotent, so running
+`core` after `minimal` just adds the extra services without reinstalling.
+
+```bash
+# Check health
 ./install-services.sh status
 ```
 
@@ -44,4 +82,4 @@ Scripts and value overrides for running the full MOSIP stack on Docker Desktop K
 - **Init containers**: `openjdk:11-jre` removed from Docker Hub. Scripts patch to `eclipse-temurin:11-jre` or skip entirely.
 - **Bitnami images**: MOSIP custom images fail Bitnami verification. Scripts pass `allowInsecureImages=true`.
 - **Storage**: Uses `hostpath` (Docker Desktop default). No NFS/EBS needed.
-- **Memory**: Scale down monitoring/logging if memory-constrained. 16GB minimum, 24GB+ recommended.
+- **Docker Hub rate limits**: If pods get stuck in `ImagePullBackOff`, pre-pull images via `docker pull mosipid/<image>:1.3.0`.
