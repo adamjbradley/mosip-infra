@@ -1,0 +1,54 @@
+# Local overrides for MOSIP Keycloak (mosip/keycloak chart v7.1.18).
+# Single replica, reduced resources, no TLS.
+replicaCount: 1
+
+serviceDiscovery:
+  enabled: false
+
+service:
+  type: ClusterIP
+
+auth:
+  adminUser: admin
+  adminPassword: admin
+
+ingress:
+  enabled: false
+
+proxyAddressForwarding: true
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 1536Mi
+  requests:
+    cpu: 25m
+    memory: 128Mi
+
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: postgres
+    password: keycloak
+  primary:
+    persistence:
+      storageClass: hostpath
+      size: 1Gi
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+
+rbac:
+  create: true
+  rules:
+  - apiGroups:
+    - ""
+    resources:
+    - pods
+    verbs:
+    - get
+    - list

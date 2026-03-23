@@ -1,0 +1,25 @@
+# Local overrides for Kafka — 1 broker + 1 ZK instead of 5+5.
+replicaCount: 1
+defaultReplicationFactor: 1
+offsetsTopicReplicationFactor: 1
+numPartitions: 5
+persistence:
+  size: 2Gi
+  storageClass: hostpath
+resources:
+  limits:
+    cpu: 500m
+    memory: 768Mi
+  requests:
+    cpu: 10m
+    memory: 128Mi
+auth:
+  clientProtocol: plaintext
+  interBrokerProtocol: plaintext
+  tls:
+    enabled: false
+zookeeper:
+  replicaCount: 1
+  persistence:
+    size: 1Gi
+    storageClass: hostpath

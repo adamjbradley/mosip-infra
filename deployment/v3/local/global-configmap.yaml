@@ -1,0 +1,30 @@
+## Global ConfigMap for local MOSIP deployment.
+## All services reference these domain names.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: global
+  namespace: default
+data:
+  installation-name: local
+  installation-domain: mosip.localhost
+  mosip-version: develop
+  mosip-api-host: api.mosip.localhost
+  mosip-api-internal-host: api-internal.mosip.localhost
+  mosip-prereg-host: prereg.mosip.localhost
+  mosip-activemq-host: activemq.mosip.localhost
+  mosip-kibana-host: kibana.mosip.localhost
+  mosip-admin-host: admin.mosip.localhost
+  mosip-regclient-host: regclient.mosip.localhost
+  mosip-minio-host: minio.mosip.localhost
+  mosip-kafka-host: kafka.mosip.localhost
+  mosip-iam-external-host: iam.mosip.localhost
+  mosip-postgres-host: postgres.mosip.localhost
+  mosip-pmp-host: pmp.mosip.localhost
+  mosip-pmp-revamp-ui-host: pmp-revamp.mosip.localhost
+  mosip-resident-host: resident.mosip.localhost
+  mosip-compliance-host: compliance.mosip.localhost
+  mosip-esignet-host: esignet.mosip.localhost
+  mosip-smtp-host: smtp.mosip.localhost
+  mosip-signup-host: signup.mosip.localhost
+  is_glowroot_env: absent

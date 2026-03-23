@@ -1,0 +1,24 @@
+# Local overrides for MOSIP PostgreSQL.
+# Reduces resources from production levels for Docker Desktop.
+primary:
+  extendedConfiguration: |
+    max_connections=200
+    wal_level=logical
+    max_wal_senders=5
+    max_replication_slots=3
+  resources:
+    limits:
+      cpu: 300m
+      memory: 512Mi
+    requests:
+      cpu: 10m
+      memory: 64Mi
+  persistence:
+    storageClass: hostpath
+    size: 8Gi
+audit:
+  logHostname: true
+  logConnections: false
+  logDisconnections: false
+image:
+  debug: false
