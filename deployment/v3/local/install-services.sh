@@ -126,6 +126,141 @@ install_conf_secrets() {
 
 # ---------- 2. config-server ----------
 
+# Config-server mounts env vars from configmaps/secrets owned by other services
+# (activemq, keycloak, s3, softhsm, etc.). On a fresh deploy these don't exist
+# yet, causing CreateContainerConfigError. This function creates stubs with
+# placeholder values so config-server can start. Real values replace these
+# when the owning services are installed.
+bootstrap_config_server_deps() {
+  local ns=$1
+
+  # Stub configmaps (only created if they don't already exist)
+  for cm_data in \
+    "activemq-activemq-artemis-share:activemq-host=activemq-activemq-artemis.activemq,activemq-core-port=61616" \
+    "postgres-setup-config:mosip-database-hostname-override=postgres-postgresql.postgres,mosip-database-port-override=5432" \
+  ; do
+    local cm_name="${cm_data%%:*}"
+    local cm_vals="${cm_data#*:}"
+    if ! kubectl -n "$ns" get cm "$cm_name" &>/dev/null; then
+      local args=""
+      IFS=',' read -ra pairs <<< "$cm_vals"
+      for pair in "${pairs[@]}"; do
+        args="$args --from-literal=$pair"
+      done
+      eval kubectl -n "$ns" create configmap "$cm_name" $args
+    fi
+  done
+
+  # Stub secrets (placeholder values — config-server passes these through to
+  # services which won't use them until properly configured)
+  for sec_name in keycloak-client-secrets; do
+    if ! kubectl -n "$ns" get secret "$sec_name" &>/dev/null; then
+      kubectl -n "$ns" create secret generic "$sec_name" \
+        --from-literal=mosip_abis_client_secret=placeholder \
+        --from-literal=mosip_auth_client_secret=placeholder \
+        --from-literal=mosip_creser_client_secret=placeholder \
+        --from-literal=mosip_creser_idpass_client_secret=placeholder \
+        --from-literal=mosip_hotlist_client_secret=placeholder \
+        --from-literal=mosip_ida_client_secret=placeholder \
+        --from-literal=mosip_idrepo_client_secret=placeholder \
+        --from-literal=mosip_pms_client_secret=placeholder \
+        --from-literal=mosip_reg_client_secret=placeholder \
+        --from-literal=mosip_resident_client_secret=placeholder \
+        --from-literal=mpartner_default_digitalcard_secret=placeholder \
+        --from-literal=mpartner_default_mobile_secret=placeholder \
+        --from-literal=mpartner_default_template_secret=placeholder \
+        --from-literal=mosip_syncdata_client_secret=placeholder \
+        --from-literal=mosip_crereq_client_secret=placeholder \
+        --from-literal=mosip_datsha_client_secret=placeholder \
+        --from-literal=mpartner_default_auth_secret=placeholder \
+        --from-literal=mpartner_default_print_secret=placeholder \
+        --from-literal=mosip_digitalcard_client_secret=placeholder \
+        --from-literal=mosip_misp_client_secret=placeholder \
+        --from-literal=mosip_policymanager_client_secret=placeholder \
+        --from-literal=mosip_prereg_client_secret=placeholder \
+        --from-literal=mosip_regproc_client_secret=placeholder \
+        --from-literal=mosip_admin_client_secret=placeholder
+    fi
+  done
+
+  # Copy secrets from their source namespaces (if they exist)
+  for src in \
+    "softhsm/softhsm-kernel" \
+    "softhsm/softhsm-ida" \
+    "activemq/activemq-activemq-artemis" \
+  ; do
+    local src_ns="${src%%/*}"
+    local sec_name="${src#*/}"
+    if kubectl -n "$src_ns" get secret "$sec_name" &>/dev/null && \
+       ! kubectl -n "$ns" get secret "$sec_name" &>/dev/null; then
+      kubectl -n "$src_ns" get secret "$sec_name" -o yaml \
+        | sed "s/namespace: $src_ns/namespace: $ns/" \
+        | kubectl apply -n "$ns" -f -
+    fi
+  done
+
+  # keycloak-host configmap
+  if ! kubectl -n "$ns" get cm keycloak-host &>/dev/null; then
+    kubectl -n "$ns" create configmap keycloak-host \
+      --from-literal=keycloak-internal-url="http://keycloak.keycloak/auth" \
+      --from-literal=keycloak-internal-host="keycloak.keycloak" \
+      --from-literal=keycloak-external-url="http://iam.mosip.localhost:30080/auth" \
+      --from-literal=keycloak-external-host="iam.mosip.localhost"
+  fi
+
+  # Copy conf-secrets-various from conf-secrets namespace
+  if ! kubectl -n "$ns" get secret conf-secrets-various &>/dev/null; then
+    kubectl -n conf-secrets get secret conf-secrets-various -o yaml \
+      | sed "s/namespace: conf-secrets/namespace: $ns/" \
+      | kubectl apply -n "$ns" -f - 2>/dev/null || true
+  fi
+
+  # Stub s3 configmap (MinIO credentials — chart uses configMapKeyRef for all keys)
+  if ! kubectl -n "$ns" get cm s3 &>/dev/null; then
+    kubectl -n "$ns" create configmap s3 \
+      --from-literal=s3-region="" \
+      --from-literal=s3-pretext-value="s3a://" \
+      --from-literal=s3-user-key=minioadmin \
+      --from-literal=s3-user-secret=minioadmin
+  fi
+
+  # Stub msg-gateway configmap + secret (chart uses both ref types)
+  if ! kubectl -n "$ns" get cm msg-gateway &>/dev/null; then
+    kubectl -n "$ns" create configmap msg-gateway \
+      --from-literal=smtp-host=mock-smtp.mock-smtp \
+      --from-literal=smtp-port=8025 \
+      --from-literal=smtp-username="" \
+      --from-literal=smtp-secret="" \
+      --from-literal=sms-host=mock-smtp.mock-smtp \
+      --from-literal=sms-port=8080 \
+      --from-literal=sms-username="" \
+      --from-literal=sms-secret="" \
+      --from-literal=sms-authkey=""
+  fi
+  if ! kubectl -n "$ns" get secret msg-gateway &>/dev/null; then
+    kubectl -n "$ns" create secret generic msg-gateway \
+      --from-literal=smtp-secret="" \
+      --from-literal=sms-secret="" \
+      --from-literal=sms-authkey=""
+  fi
+
+  # Stub mosip-captcha secret (key names must match chart expectations)
+  if ! kubectl -n "$ns" get secret mosip-captcha &>/dev/null; then
+    kubectl -n "$ns" create secret generic mosip-captcha \
+      --from-literal=prereg-captcha-site-key=dummy \
+      --from-literal=prereg-captcha-secret-key=dummy \
+      --from-literal=resident-captcha-site-key=dummy \
+      --from-literal=resident-captcha-secret-key=dummy
+  fi
+
+  # Copy keycloak admin password secret
+  if ! kubectl -n "$ns" get secret keycloak &>/dev/null; then
+    kubectl -n keycloak get secret keycloak -o yaml \
+      | sed "s/namespace: keycloak/namespace: $ns/" \
+      | kubectl apply -n "$ns" -f - 2>/dev/null || true
+  fi
+}
+
 install_config_server() {
   echo "=== Installing config-server (2/27) ==="
   local NS=config-server
@@ -133,6 +268,13 @@ install_config_server() {
   copy_cm global default $NS
   copy_cm keycloak-host default $NS 2>/dev/null || true
   ensure_db_secret $NS
+
+  # config-server mounts env vars from 14 configmaps/secrets across many namespaces.
+  # Create stubs for any that don't exist yet so the pod can start.
+  # Real values are populated later when the owning service is installed.
+  echo "  Bootstrapping config-server dependencies..."
+  bootstrap_config_server_deps $NS
+
   helm upgrade --install config-server mosip/config-server \
     -n $NS --version $CHART_VERSION \
     --set resources.requests.cpu=10m \
@@ -143,8 +285,12 @@ install_config_server() {
     --set 'spring_profiles.spring_compositeRepos[0].type=git' \
     --set 'spring_profiles.spring_compositeRepos[0].uri=https://github.com/mosip/mosip-config.git' \
     --set 'spring_profiles.spring_compositeRepos[0].version=v1.3.0' \
+    --set 'spring_profiles.spring_compositeRepos[0].spring_cloud_config_server_git_cloneOnStart=true' \
+    --set 'spring_profiles.spring_compositeRepos[0].spring_cloud_config_server_git_force_pull=true' \
+    --set 'spring_profiles.spring_compositeRepos[0].spring_cloud_config_server_git_refreshRate=0' \
+    --set extraEnvVars[0].name=JDK_JAVA_OPTIONS \
+    --set extraEnvVars[0].value="$JVM_OPTS" \
     --timeout 5m
-  patch_jvm $NS config-server
 
   echo "  Waiting for config-server to be ready (may take 2-3 min)..."
   kubectl -n $NS rollout status deploy/config-server --timeout=300s || true
