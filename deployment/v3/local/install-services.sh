@@ -590,7 +590,14 @@ install_regproc() {
     --wait --wait-for-jobs --timeout 10m
 
   for svc in regproc-workflow regproc-status regproc-camel regproc-pktserver regproc-group1 regproc-group2; do
-    install_mosip_chart $NS "$svc" "$svc"
+    # regproc-group1 and regproc-pktserver need PVCs — use hostpath storage
+    local extra_args=""
+    if [ "$svc" = "regproc-group1" ] || [ "$svc" = "regproc-pktserver" ]; then
+      extra_args="--set persistence.storageClass=hostpath"
+    fi
+    helm_install $NS "$svc" "$svc" $extra_args
+    skip_cacerts_init $NS "$svc"
+    wait_ready $NS "$svc"
   done
 }
 
