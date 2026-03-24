@@ -205,25 +205,13 @@ install_postgres() {
   local PG_PASS
   PG_PASS=$(kubectl -n $NS get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d)
   # Run in postgres namespace so init jobs can access the postgres-postgresql secret
+  # Use the production init_values.yaml as source of truth for all databases.
+  # This includes mosip_idmap, mosip_otp, mosip_digitalcard which are missing
+  # if databases are hardcoded individually.
   helm upgrade --install postgres-init mosip/postgres-init \
     -n $NS --version 1.3.0 \
-    --set databases.mosip_kernel.enabled=true \
-    --set databases.mosip_keymgr.enabled=true \
-    --set databases.mosip_master.enabled=true \
-    --set databases.mosip_audit.enabled=true \
-    --set databases.mosip_idrepo.enabled=true \
-    --set databases.mosip_credential.enabled=true \
-    --set databases.mosip_ida.enabled=true \
-    --set databases.mosip_pms.enabled=true \
-    --set databases.mosip_regprc.enabled=true \
-    --set databases.mosip_prereg.enabled=true \
-    --set databases.mosip_resident.enabled=true \
-    --set databases.mosip_hotlist.enabled=true \
-    --set databases.mosip_regdevice.enabled=true \
-    --set databases.mosip_authdevice.enabled=true \
+    -f "$SCRIPT_DIR/../external/postgres/init_values.yaml" \
     --set dbUserPasswords.dbuserPassword="$PG_PASS" \
-    --set dbhost="postgres-postgresql.postgres" \
-    --set dbport=5432 \
     --set superUser.name=postgres \
     --set superUser.password="$PG_PASS" \
     --wait --wait-for-jobs --timeout 10m

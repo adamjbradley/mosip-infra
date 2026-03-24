@@ -510,8 +510,11 @@ install_websub() {
   echo "=== Layer 5: websub ==="
   local NS=websub
   setup_ns $NS
-  install_mosip_chart $NS websub-consolidator websub-consolidator
-  install_mosip_chart $NS websub websub
+  for svc in websub-consolidator websub; do
+    helm_install $NS "$svc" "$svc"
+    skip_cacerts_init $NS "$svc"
+    wait_ready $NS "$svc"
+  done
 }
 
 # ---------- Layer 5: biosdk ----------
@@ -531,14 +534,18 @@ install_packetmanager() {
   echo "=== Layer 5: packetmanager ==="
   local NS=packetmanager
   setup_ns $NS
-  install_mosip_chart $NS packetmanager packetmanager
+  helm_install $NS packetmanager packetmanager
+  skip_cacerts_init $NS packetmanager
+  wait_ready $NS packetmanager
 }
 
 install_datashare() {
   echo "=== Layer 5: datashare ==="
   local NS=datashare
   setup_ns $NS
-  install_mosip_chart $NS datashare datashare
+  helm_install $NS datashare datashare
+  skip_cacerts_init $NS datashare
+  wait_ready $NS datashare
 }
 
 # ---------- Layer 6: ida ----------
