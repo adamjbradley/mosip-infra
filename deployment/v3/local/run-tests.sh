@@ -165,6 +165,21 @@ install_testrig() {
       2>/dev/null || true
   done
 
+  # Add hostAliases so test pods can reach api-internal.mosip.localhost and
+  # iam.mosip.localhost via the in-cluster ingress-nginx ClusterIP.
+  echo "  Patching cronjobs with hostAliases for ingress resolution..."
+  local ingress_ip
+  ingress_ip=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.clusterIP}')
+  for cj in $(kubectl -n $NS get cronjob --no-headers 2>/dev/null | awk '{print $1}'); do
+    kubectl -n $NS patch cronjob "$cj" --type='json' \
+      -p="[{\"op\":\"add\",\"path\":\"/spec/jobTemplate/spec/template/spec/hostAliases\",\"value\":[{\"ip\":\"$ingress_ip\",\"hostnames\":[\"api-internal.mosip.localhost\",\"iam.mosip.localhost\",\"api.mosip.localhost\"]}]}]" \
+      2>/dev/null || true
+  done
+
+  # Apply ingress rules so api-internal.mosip.localhost routes to MOSIP services
+  echo "  Applying MOSIP ingress rules..."
+  kubectl apply -f "$SCRIPT_DIR/ingress-mosip.yaml" 2>/dev/null || true
+
   echo "  Apitestrig installed (cronjob: every 6 hours)."
 }
 

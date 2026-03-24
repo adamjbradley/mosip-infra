@@ -295,6 +295,42 @@ install_keycloak() {
   wait_pod_ready $NS keycloak-postgresql
   # Then Keycloak itself (first boot takes 3-5 min for DB migration)
   wait_pod_ready $NS "keycloak-0"
+
+  # Initialize Keycloak with MOSIP realm, clients, and roles.
+  # Must run AFTER keycloak is fully ready (needs admin API).
+  # Creates 'mosip' realm and ~25 clients (mosip-admin-client, etc.)
+  echo "  Initializing Keycloak with MOSIP realm and clients..."
+  helm upgrade --install keycloak-init mosip/keycloak-init \
+    -n $NS --version 1.3.0 \
+    --set keycloakExternalHost="iam.mosip.localhost" \
+    --set keycloakInternalHost="keycloak.keycloak" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.host="mock-smtp.mock-smtp" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.port="8025" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.from="noreply@mosip.localhost" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.starttls="false" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.ssl="false" \
+    --set keycloak.realms.mosip.realm_config.smtpServer.auth="false" \
+    --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost:30080/auth" \
+    --wait --wait-for-jobs --timeout 15m 2>/dev/null || {
+      # keycloak-init may fail on opencrvs client (token expiry during long init).
+      # Re-run to complete remaining clients (idempotent — existing clients are skipped).
+      echo "  WARNING: keycloak-init had errors, re-running..."
+      kubectl -n $NS delete job keycloak-init 2>/dev/null || true
+      sleep 5
+      helm upgrade --install keycloak-init mosip/keycloak-init \
+        -n $NS --version 1.3.0 \
+        --set keycloakExternalHost="iam.mosip.localhost" \
+        --set keycloakInternalHost="keycloak.keycloak" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.host="mock-smtp.mock-smtp" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.port="8025" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.from="noreply@mosip.localhost" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.starttls="false" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.ssl="false" \
+        --set keycloak.realms.mosip.realm_config.smtpServer.auth="false" \
+        --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost:30080/auth" \
+        --wait --wait-for-jobs --timeout 15m 2>/dev/null || true
+    }
+  echo "  Keycloak initialization complete."
 }
 
 # ---------- softhsm ----------

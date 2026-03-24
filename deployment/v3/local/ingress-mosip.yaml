@@ -1,4 +1,7 @@
-# Ingress resources for MOSIP external services (replaces Istio VirtualServices).
+# Ingress resources for MOSIP services (replaces Istio VirtualServices).
+# Each module gets its own Ingress in its own namespace, all sharing the
+# api-internal.mosip.localhost hostname. This matches production where
+# Istio routes all APIs behind a single gateway.
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -85,3 +88,125 @@ spec:
                 name: activemq-activemq-artemis
                 port:
                   number: 8161
+---
+# Kernel services — api-internal.mosip.localhost/v1/<service>
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-internal-kernel
+  namespace: kernel
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "128k"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-internal.mosip.localhost
+      http:
+        paths:
+          - path: /v1/authmanager
+            pathType: Prefix
+            backend: { service: { name: authmanager, port: { number: 80 } } }
+          - path: /v1/auditmanager
+            pathType: Prefix
+            backend: { service: { name: auditmanager, port: { number: 80 } } }
+          - path: /v1/masterdata
+            pathType: Prefix
+            backend: { service: { name: masterdata, port: { number: 80 } } }
+          - path: /v1/syncdata
+            pathType: Prefix
+            backend: { service: { name: syncdata, port: { number: 80 } } }
+          - path: /v1/otpmanager
+            pathType: Prefix
+            backend: { service: { name: otpmanager, port: { number: 80 } } }
+          - path: /v1/pridgenerator
+            pathType: Prefix
+            backend: { service: { name: pridgenerator, port: { number: 80 } } }
+          - path: /v1/ridgenerator
+            pathType: Prefix
+            backend: { service: { name: ridgenerator, port: { number: 80 } } }
+          - path: /v1/idgenerator
+            pathType: Prefix
+            backend: { service: { name: idgenerator, port: { number: 80 } } }
+          - path: /v1/notifier
+            pathType: Prefix
+            backend: { service: { name: notifier, port: { number: 80 } } }
+---
+# Keymanager
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-internal-keymanager
+  namespace: keymanager
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-internal.mosip.localhost
+      http:
+        paths:
+          - path: /v1/keymanager
+            pathType: Prefix
+            backend: { service: { name: keymanager, port: { number: 80 } } }
+---
+# ID Repository
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-internal-idrepo
+  namespace: idrepo
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-internal.mosip.localhost
+      http:
+        paths:
+          - path: /idrepository
+            pathType: Prefix
+            backend: { service: { name: identity, port: { number: 80 } } }
+          - path: /v1/credentialservice
+            pathType: Prefix
+            backend: { service: { name: credential, port: { number: 80 } } }
+          - path: /v1/vidgenerator
+            pathType: Prefix
+            backend: { service: { name: vid, port: { number: 80 } } }
+---
+# Config server
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-internal-config
+  namespace: config-server
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-internal.mosip.localhost
+      http:
+        paths:
+          - path: /config
+            pathType: Prefix
+            backend: { service: { name: config-server, port: { number: 80 } } }
+---
+# BioSDK
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-internal-biosdk
+  namespace: biosdk
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api-internal.mosip.localhost
+      http:
+        paths:
+          - path: /biosdk-service
+            pathType: Prefix
+            backend: { service: { name: biosdk-service, port: { number: 80 } } }
