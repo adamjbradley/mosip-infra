@@ -228,6 +228,51 @@ install_postgres() {
     --set superUser.password="$PG_PASS" \
     --wait --wait-for-jobs --timeout 10m
   echo "  MOSIP databases initialized."
+
+  # Create additional DB users and databases that postgres-init doesn't handle.
+  # These are referenced in mosip-config git repo properties but not in the init chart.
+  echo "  Creating additional MOSIP DB users..."
+  for user_db in \
+    "otpuser:mosip_otp" \
+    "idmapuser:mosip_idmap" \
+    "regdeviceuser:mosip_regdevice" \
+    "authdeviceuser:mosip_authdevice" \
+  ; do
+    local user db
+    user=$(echo "$user_db" | cut -d: -f1)
+    db=$(echo "$user_db" | cut -d: -f2)
+    kubectl -n $NS exec postgres-postgresql-0 -- bash -c \
+      "PGPASSWORD='$PG_PASS' psql -U postgres -c \"CREATE USER $user WITH PASSWORD '$PG_PASS';\"" 2>/dev/null || true
+    kubectl -n $NS exec postgres-postgresql-0 -- bash -c \
+      "PGPASSWORD='$PG_PASS' psql -U postgres -c \"CREATE DATABASE $db;\"" 2>/dev/null || true
+    kubectl -n $NS exec postgres-postgresql-0 -- bash -c \
+      "PGPASSWORD='$PG_PASS' psql -U postgres -c \"GRANT ALL PRIVILEGES ON DATABASE $db TO $user;\"" 2>/dev/null || true
+  done
+
+  # Create schemas and salt tables needed by idrepo-saltgen.
+  # The postgres-init chart creates databases but not all schemas/tables.
+  echo "  Creating idmap and idrepo schemas for saltgen..."
+  kubectl -n $NS exec postgres-postgresql-0 -- bash -c "PGPASSWORD='$PG_PASS' psql -U postgres -d mosip_idmap -c '
+    CREATE SCHEMA IF NOT EXISTS idmap;
+    GRANT ALL ON SCHEMA idmap TO idmapuser;
+    CREATE TABLE IF NOT EXISTS idmap.uin_hash_salt (
+      id bigint NOT NULL, salt varchar(36) NOT NULL,
+      cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
+      upd_by varchar(256), upd_dtimes timestamp,
+      CONSTRAINT pk_uinhs_id PRIMARY KEY (id));
+    GRANT ALL ON ALL TABLES IN SCHEMA idmap TO idmapuser;'" 2>/dev/null || true
+
+  kubectl -n $NS exec postgres-postgresql-0 -- bash -c "PGPASSWORD='$PG_PASS' psql -U postgres -d mosip_idrepo -c '
+    CREATE SCHEMA IF NOT EXISTS idrepo;
+    GRANT ALL ON SCHEMA idrepo TO idrepouser;
+    CREATE TABLE IF NOT EXISTS idrepo.uin_hash_salt (
+      id bigint NOT NULL, salt varchar(36) NOT NULL,
+      cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
+      upd_by varchar(256), upd_dtimes timestamp,
+      CONSTRAINT pk_uinhs_id PRIMARY KEY (id));
+    GRANT ALL ON ALL TABLES IN SCHEMA idrepo TO idrepouser;'" 2>/dev/null || true
+
+  echo "  Additional DB users and schemas created."
 }
 
 # ---------- keycloak (MOSIP version with built-in postgres) ----------

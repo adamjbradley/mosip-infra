@@ -730,6 +730,7 @@ case "$COMPONENT" in
     install_conf_secrets        # Layer 0
     install_config_server       # Layer 1 (waits until Ready)
     install_artifactory         # Layer 1.5
+    install_mock_smtp           # Needed for notifier health check
     install_keymanager          # Layer 2 (waits until Ready)
     install_kernel              # Layer 3 (each of 9 services waits)
     install_idrepo              # Layer 4 (each of 3 services waits)
