@@ -332,7 +332,7 @@ bootstrap_config_server_deps() {
     kubectl -n "$ns" create configmap keycloak-host \
       --from-literal=keycloak-internal-url="http://keycloak.keycloak/auth" \
       --from-literal=keycloak-internal-host="keycloak.keycloak" \
-      --from-literal=keycloak-external-url="http://iam.mosip.localhost:30080/auth" \
+      --from-literal=keycloak-external-url="http://iam.mosip.localhost/auth" \
       --from-literal=keycloak-external-host="iam.mosip.localhost"
   fi
 
