@@ -13,6 +13,11 @@
 #   - helm, kubectl on PATH
 #
 # Usage: ./install-external.sh [minimal|core|all|component|teardown]
+#
+# NOTE: When installing config-server (in install-services.sh), its deployment
+# strategy should be patched to Recreate to avoid port conflicts during rolling
+# updates:
+#   kubectl -n config-server patch deploy config-server -p '{"spec":{"strategy":{"type":"Recreate"}}}'
 
 set -e
 set -o errexit
@@ -49,6 +54,88 @@ add_helm_repos() {
   helm repo add mosip https://mosip.github.io/mosip-helm 2>/dev/null || true
   helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
   helm repo update
+}
+
+# Poll interval for checking pod status
+POLL_INTERVAL=5
+MAX_CRASHES=3
+
+# Wait for a pod to be fully ready (1/1 Running).
+# Works for both Deployments and StatefulSets.
+# Actively checks logs on crash instead of blocking on a timeout.
+#
+# Usage: wait_pod_ready <namespace> <pod-name-prefix>
+wait_pod_ready() {
+  local ns=$1 prefix=$2
+  local crash_count=0 prev_restarts=0
+
+  echo "  Waiting for $prefix..."
+  while true; do
+    local pod_line
+    pod_line=$(kubectl -n "$ns" get pods --no-headers 2>/dev/null \
+      | grep "^$prefix" | grep -v Terminating | head -1)
+
+    if [ -z "$pod_line" ]; then
+      echo "    No pod found yet for $prefix, waiting..."
+      sleep $POLL_INTERVAL
+      continue
+    fi
+
+    local pod_name ready status restarts
+    pod_name=$(echo "$pod_line" | awk '{print $1}')
+    ready=$(echo "$pod_line" | awk '{print $2}')
+    status=$(echo "$pod_line" | awk '{print $3}')
+    restarts=$(echo "$pod_line" | awk '{print $4}' | sed 's/(.*//')
+
+    # Success
+    if [ "$ready" = "1/1" ] && [ "$status" = "Running" ]; then
+      echo "  $prefix is Ready (1/1 Running)."
+      return 0
+    fi
+
+    # Crash detection
+    case "$status" in
+      CrashLoopBackOff|Error|OOMKilled|CreateContainerConfigError|ImagePullBackOff|ErrImagePull)
+        echo "    $prefix is in $status — checking logs..."
+        kubectl -n "$ns" logs "$pod_name" --tail=10 2>&1 \
+          | grep -iE "error|exception|fatal|killed|denied|refused" | tail -3
+        crash_count=$((crash_count + 1))
+        if [ "$crash_count" -ge "$MAX_CRASHES" ]; then
+          echo "  FATAL: $prefix crashed $crash_count times ($status). Aborting."
+          return 1
+        fi
+        echo "    Crash $crash_count/$MAX_CRASHES — will retry..."
+        ;;
+      Running)
+        if [ "$((restarts))" -gt "$((prev_restarts))" ]; then
+          echo "    $prefix restarted (restarts: $restarts) — checking previous logs..."
+          kubectl -n "$ns" logs "$pod_name" --previous --tail=5 2>&1 \
+            | grep -iE "error|exception|fatal|killed" | tail -2 || true
+          prev_restarts=$restarts
+          crash_count=$((crash_count + 1))
+          if [ "$crash_count" -ge "$MAX_CRASHES" ]; then
+            echo "  FATAL: $prefix restarted $crash_count times. Aborting."
+            return 1
+          fi
+        else
+          echo "    $prefix: $ready $status (starting up...)"
+        fi
+        ;;
+      *)
+        echo "    $prefix: $ready $status"
+        ;;
+    esac
+
+    sleep $POLL_INTERVAL
+  done
+}
+
+# ---------- CRDs ----------
+
+install_crds() {
+  echo "=== Installing CRDs (ServiceMonitor, VirtualService) ==="
+  kubectl apply -f https://raw.githubusercontent.com/prometheus-community/helm-charts/main/charts/kube-prometheus-stack/charts/crds/crds/crd-servicemonitors.yaml 2>/dev/null || true
+  kubectl apply -f https://raw.githubusercontent.com/istio/istio/release-1.20/manifests/charts/base/crds/crd-all.gen.yaml 2>/dev/null || true
 }
 
 # ---------- ingress ----------
@@ -104,8 +191,43 @@ install_postgres() {
     --set image.repository=mosipid/postgresql \
     --set image.tag=14.2.0-debian-10-r70 \
     --set global.security.allowInsecureImages=true \
-    --wait --timeout 5m
-  echo "PostgreSQL installed."
+    --timeout 5m
+  wait_pod_ready $NS postgres-postgresql
+
+  # Patch the secret to add 'postgres-password' key (alias for 'postgresql-password').
+  # The postgres-init chart expects the 'postgres-password' key to exist.
+  echo "  Patching postgres secret to add postgres-password alias..."
+  local PG_PASS_B64
+  PG_PASS_B64=$(kubectl -n $NS get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}')
+  kubectl -n $NS patch secret postgres-postgresql -p "{\"data\":{\"postgres-password\":\"$PG_PASS_B64\"}}"
+
+  echo "  Initializing MOSIP databases (creates users + schemas)..."
+  local PG_PASS
+  PG_PASS=$(kubectl -n $NS get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d)
+  # Run in postgres namespace so init jobs can access the postgres-postgresql secret
+  helm upgrade --install postgres-init mosip/postgres-init \
+    -n $NS --version 1.3.0 \
+    --set databases.mosip_kernel.enabled=true \
+    --set databases.mosip_keymgr.enabled=true \
+    --set databases.mosip_master.enabled=true \
+    --set databases.mosip_audit.enabled=true \
+    --set databases.mosip_idrepo.enabled=true \
+    --set databases.mosip_credential.enabled=true \
+    --set databases.mosip_ida.enabled=true \
+    --set databases.mosip_pms.enabled=true \
+    --set databases.mosip_regprc.enabled=true \
+    --set databases.mosip_prereg.enabled=true \
+    --set databases.mosip_resident.enabled=true \
+    --set databases.mosip_hotlist.enabled=true \
+    --set databases.mosip_regdevice.enabled=true \
+    --set databases.mosip_authdevice.enabled=true \
+    --set dbUserPasswords.dbuserPassword="$PG_PASS" \
+    --set dbhost="postgres-postgresql.postgres" \
+    --set dbport=5432 \
+    --set superUser.name=postgres \
+    --set superUser.password="$PG_PASS" \
+    --wait --wait-for-jobs --timeout 10m
+  echo "  MOSIP databases initialized."
 }
 
 # ---------- keycloak (MOSIP version with built-in postgres) ----------
@@ -125,7 +247,10 @@ install_keycloak() {
     --set postgresql.image.tag=14.2.0-debian-10-r70 \
     --set global.security.allowInsecureImages=true \
     --timeout 10m
-  echo "Keycloak installed (may take 5+ min to fully start)."
+  # Keycloak's internal postgres must be ready first
+  wait_pod_ready $NS keycloak-postgresql
+  # Then Keycloak itself (first boot takes 3-5 min for DB migration)
+  wait_pod_ready $NS "keycloak-0"
 }
 
 # ---------- softhsm ----------
@@ -134,21 +259,50 @@ install_softhsm() {
   echo "=== Installing SoftHSM ==="
   local NS=softhsm
   ensure_ns $NS
+
+  # Install SoftHSM instances. Each generates a random security PIN stored in its
+  # own secret (softhsm-kernel and softhsm-ida in the softhsm namespace).
+  # These are the authoritative PINs — config-server and other services should
+  # read from these secrets rather than generating their own.
   helm upgrade --install softhsm-kernel mosip/softhsm \
     -n $NS --version 1.3.0 \
     --set resources.requests.cpu=5m \
     --set resources.requests.memory=16Mi \
     --set resources.limits.cpu=100m \
     --set resources.limits.memory=128Mi \
-    --wait --timeout 3m
+    --timeout 3m
+  wait_pod_ready $NS softhsm-kernel
+
   helm upgrade --install softhsm-ida mosip/softhsm \
     -n $NS --version 1.3.0 \
     --set resources.requests.cpu=5m \
     --set resources.requests.memory=16Mi \
     --set resources.limits.cpu=100m \
     --set resources.limits.memory=128Mi \
-    --wait --timeout 3m
+    --timeout 3m
+  wait_pod_ready $NS softhsm-ida
   echo "SoftHSM installed (kernel + ida)."
+
+  # Export the generated PINs so install-services.sh can use them.
+  # The softhsm chart creates secrets with key 'security-pin'.
+  echo "  Reading SoftHSM PINs for downstream use..."
+  local KERNEL_PIN IDA_PIN
+  KERNEL_PIN=$(kubectl -n $NS get secret softhsm-kernel -o jsonpath='{.data.security-pin}' 2>/dev/null || echo "")
+  IDA_PIN=$(kubectl -n $NS get secret softhsm-ida -o jsonpath='{.data.security-pin}' 2>/dev/null || echo "")
+  if [ -n "$KERNEL_PIN" ] && [ -n "$IDA_PIN" ]; then
+    echo "  SoftHSM PINs captured. Creating cross-namespace copies..."
+    # Store PINs in default namespace so config-server and other services can access them.
+    # This avoids conf-secrets generating conflicting random PINs.
+    kubectl create secret generic softhsm-kernel \
+      --from-literal=security-pin="$(echo "$KERNEL_PIN" | base64 -d)" \
+      -n default --dry-run=client -o yaml | kubectl apply -f -
+    kubectl create secret generic softhsm-ida \
+      --from-literal=security-pin="$(echo "$IDA_PIN" | base64 -d)" \
+      -n default --dry-run=client -o yaml | kubectl apply -f -
+    echo "  SoftHSM PIN secrets copied to default namespace."
+  else
+    echo "  WARNING: Could not read SoftHSM PINs. conf-secrets may generate conflicting PINs."
+  fi
 }
 
 # ---------- minio ----------
@@ -167,8 +321,8 @@ install_minio() {
     --set resources.requests.memory=64Mi \
     --set resources.limits.cpu=200m \
     --set resources.limits.memory=256Mi \
-    --wait --timeout 5m
-  echo "MinIO installed."
+    --timeout 5m
+  wait_pod_ready $NS minio
 }
 
 # ---------- clamav ----------
@@ -183,8 +337,8 @@ install_clamav() {
     --set image.tag=1.3.0_base \
     --set resources.requests.memory=512Mi \
     --set resources.limits.memory=1200Mi \
-    --wait --timeout 5m
-  echo "ClamAV installed."
+    --timeout 5m
+  wait_pod_ready $NS clamav
 }
 
 # ---------- activemq ----------
@@ -202,8 +356,8 @@ install_activemq() {
     --set resources.requests.memory=64Mi \
     --set resources.limits.cpu=300m \
     --set resources.limits.memory=768Mi \
-    --wait --timeout 5m
-  echo "ActiveMQ installed."
+    --timeout 5m
+  wait_pod_ready $NS activemq-activemq-artemis-master
 }
 
 # ---------- kafka ----------
@@ -222,7 +376,10 @@ install_kafka() {
     --set global.security.allowInsecureImages=true \
     --set persistence.storageClass=hostpath \
     --set zookeeper.persistence.storageClass=hostpath \
-    --wait --timeout 5m
+    --timeout 5m
+  # Zookeeper must be ready before Kafka
+  wait_pod_ready $NS kafka-zookeeper
+  wait_pod_ready $NS "kafka-0"
 
   # Kafka UI
   helm upgrade --install kafka-ui mosip/kafka-ui \
@@ -298,6 +455,7 @@ case "$COMPONENT" in
   # --- profiles ---
   minimal)
     add_helm_repos
+    install_crds
     install_global_configmap
     install_postgres
     install_keycloak
@@ -310,6 +468,7 @@ case "$COMPONENT" in
     ;;
   core)
     add_helm_repos
+    install_crds
     install_global_configmap
     install_postgres
     install_keycloak
@@ -325,6 +484,7 @@ case "$COMPONENT" in
     ;;
   all)
     add_helm_repos
+    install_crds
     install_global_configmap
     install_postgres
     install_keycloak
