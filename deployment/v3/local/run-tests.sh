@@ -100,7 +100,7 @@ setup_testrig_ns() {
   copy_resource configmap artifactory-share artifactory $NS
   copy_resource configmap config-server-share config-server $NS
 
-  # Copy secrets
+  # Copy secrets (real client secrets from keycloak, not placeholders from config-server)
   copy_resource secret keycloak-client-secrets keycloak $NS
   copy_resource secret s3 minio $NS 2>/dev/null || \
     copy_resource secret s3 config-server $NS  # Fallback to config-server stub

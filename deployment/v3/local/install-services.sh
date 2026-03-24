@@ -281,9 +281,15 @@ bootstrap_config_server_deps() {
     fi
   done
 
-  # Stub keycloak-client-secrets
+  # Copy real keycloak-client-secrets from keycloak namespace (created by keycloak-init).
+  # Falls back to placeholder stubs if keycloak-init hasn't run yet.
   if ! kubectl -n "$ns" get secret keycloak-client-secrets &>/dev/null; then
-    kubectl -n "$ns" create secret generic keycloak-client-secrets \
+    if kubectl -n keycloak get secret keycloak-client-secrets &>/dev/null; then
+      echo "    Copying real keycloak-client-secrets from keycloak namespace..."
+      copy_secret keycloak-client-secrets keycloak "$ns"
+    else
+      echo "    Creating placeholder keycloak-client-secrets (run keycloak-init for real values)..."
+      kubectl -n "$ns" create secret generic keycloak-client-secrets \
       --from-literal=mosip_abis_client_secret=placeholder \
       --from-literal=mosip_auth_client_secret=placeholder \
       --from-literal=mosip_creser_client_secret=placeholder \
@@ -308,6 +314,7 @@ bootstrap_config_server_deps() {
       --from-literal=mosip_prereg_client_secret=placeholder \
       --from-literal=mosip_regproc_client_secret=placeholder \
       --from-literal=mosip_admin_client_secret=placeholder
+    fi
   fi
 
   # Copy secrets from source namespaces (or create stubs if source doesn't exist)
