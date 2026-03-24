@@ -205,7 +205,7 @@ PROPS
   for cj in $(kubectl -n $NS get cronjob --no-headers 2>/dev/null | awk '{print $1}'); do
     kubectl -n $NS patch cronjob "$cj" --type='json' -p='[
       {"op":"add","path":"/spec/jobTemplate/spec/template/spec/volumes/-","value":{"name":"idrepo-props","configMap":{"name":"idrepo-properties"}}},
-      {"op":"add","path":"/spec/jobTemplate/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"idrepo-props","mountPath":"/home/mosip/config/Idrepo.properties","subPath":"Idrepo.properties"}}
+      {"op":"add","path":"/spec/jobTemplate/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"idrepo-props","mountPath":"/home/mosip/MosipTestResource/MosipTemporaryTestResource/config/Idrepo.properties","subPath":"Idrepo.properties"}}
     ]' 2>/dev/null || true
   done
 
