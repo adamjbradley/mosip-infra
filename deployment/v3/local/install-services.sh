@@ -520,7 +520,9 @@ install_biosdk() {
   echo "=== Layer 5: biosdk ==="
   local NS=biosdk
   setup_ns $NS
-  install_mosip_chart $NS biosdk biosdk-service
+  # Release name must be "biosdk-service" so the K8s service name matches
+  # the config property mosip.mock.biosdk.url=http://biosdk-service.biosdk
+  install_mosip_chart $NS biosdk-service biosdk-service
 }
 
 # ---------- Layer 5: packetmanager + datashare ----------
@@ -733,6 +735,7 @@ case "$COMPONENT" in
     install_mock_smtp           # Needed for notifier health check
     install_keymanager          # Layer 2 (waits until Ready)
     install_kernel              # Layer 3 (each of 9 services waits)
+    install_biosdk              # Identity service requires BioSDK at startup
     install_idrepo              # Layer 4 (each of 3 services waits)
     echo ""
     echo "Minimal MOSIP services installed."
