@@ -541,7 +541,10 @@ install_packetmanager() {
   echo "=== Layer 5: packetmanager ==="
   local NS=packetmanager
   setup_ns $NS
-  helm_install $NS packetmanager packetmanager
+  # Packetmanager needs more memory than default — OOMKilled at 1Gi
+  helm_install $NS packetmanager packetmanager \
+    --set "additionalResources.javaOpts=-Xms768m -Xmx1024m" \
+    --set resources.limits.memory=2Gi
   skip_cacerts_init $NS packetmanager
   wait_ready $NS packetmanager
 }
