@@ -251,26 +251,30 @@ install_postgres() {
 
   # Create schemas and salt tables needed by idrepo-saltgen.
   # The postgres-init chart creates databases but not all schemas/tables.
+  # Create schemas and salt tables for idrepo-saltgen.
+  # The saltgen job needs uin_hash_salt and uin_encrypt_salt in both
+  # mosip_idmap (idmap schema) and mosip_idrepo (idrepo schema).
   echo "  Creating idmap and idrepo schemas for saltgen..."
-  kubectl -n $NS exec postgres-postgresql-0 -- bash -c "PGPASSWORD='$PG_PASS' psql -U postgres -d mosip_idmap -c '
-    CREATE SCHEMA IF NOT EXISTS idmap;
-    GRANT ALL ON SCHEMA idmap TO idmapuser;
-    CREATE TABLE IF NOT EXISTS idmap.uin_hash_salt (
-      id bigint NOT NULL, salt varchar(36) NOT NULL,
-      cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
-      upd_by varchar(256), upd_dtimes timestamp,
-      CONSTRAINT pk_uinhs_id PRIMARY KEY (id));
-    GRANT ALL ON ALL TABLES IN SCHEMA idmap TO idmapuser;'" 2>/dev/null || true
-
-  kubectl -n $NS exec postgres-postgresql-0 -- bash -c "PGPASSWORD='$PG_PASS' psql -U postgres -d mosip_idrepo -c '
-    CREATE SCHEMA IF NOT EXISTS idrepo;
-    GRANT ALL ON SCHEMA idrepo TO idrepouser;
-    CREATE TABLE IF NOT EXISTS idrepo.uin_hash_salt (
-      id bigint NOT NULL, salt varchar(36) NOT NULL,
-      cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
-      upd_by varchar(256), upd_dtimes timestamp,
-      CONSTRAINT pk_uinhs_id PRIMARY KEY (id));
-    GRANT ALL ON ALL TABLES IN SCHEMA idrepo TO idrepouser;'" 2>/dev/null || true
+  for db_schema_user in "mosip_idmap:idmap:idmapuser" "mosip_idrepo:idrepo:idrepouser"; do
+    local db schema dbuser
+    db=$(echo "$db_schema_user" | cut -d: -f1)
+    schema=$(echo "$db_schema_user" | cut -d: -f2)
+    dbuser=$(echo "$db_schema_user" | cut -d: -f3)
+    kubectl -n $NS exec postgres-postgresql-0 -- bash -c "PGPASSWORD='$PG_PASS' psql -U postgres -d $db -c '
+      CREATE SCHEMA IF NOT EXISTS $schema;
+      GRANT ALL ON SCHEMA $schema TO $dbuser;
+      CREATE TABLE IF NOT EXISTS $schema.uin_hash_salt (
+        id bigint NOT NULL, salt varchar(36) NOT NULL,
+        cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
+        upd_by varchar(256), upd_dtimes timestamp,
+        CONSTRAINT pk_uinhs_id PRIMARY KEY (id));
+      CREATE TABLE IF NOT EXISTS $schema.uin_encrypt_salt (
+        id bigint NOT NULL, salt varchar(36) NOT NULL,
+        cr_by varchar(256) NOT NULL, cr_dtimes timestamp NOT NULL,
+        upd_by varchar(256), upd_dtimes timestamp,
+        CONSTRAINT pk_uines_id PRIMARY KEY (id));
+      GRANT ALL ON ALL TABLES IN SCHEMA $schema TO $dbuser;'" 2>/dev/null || true
+  done
 
   echo "  Additional DB users and schemas created."
 }
