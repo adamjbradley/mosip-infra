@@ -96,7 +96,13 @@ setup_testrig_ns() {
 
   # Copy configmaps
   copy_resource configmap global default $NS
-  copy_resource configmap keycloak-host default $NS   # keycloak-host is in default ns
+  # Create keycloak-host with testrig-compatible URL (no /auth suffix — testrig appends it)
+  kubectl -n $NS create configmap keycloak-host \
+    --from-literal=keycloak-internal-url="http://keycloak.keycloak/auth" \
+    --from-literal=keycloak-internal-host="keycloak.keycloak" \
+    --from-literal=keycloak-external-url="http://iam.mosip.localhost" \
+    --from-literal=keycloak-external-host="iam.mosip.localhost" \
+    --dry-run=client -o yaml | kubectl apply -n $NS -f - 2>/dev/null
   copy_resource configmap artifactory-share artifactory $NS
   copy_resource configmap config-server-share config-server $NS
 
@@ -174,39 +180,6 @@ install_testrig() {
     kubectl -n $NS patch cronjob "$cj" --type='json' \
       -p="[{\"op\":\"add\",\"path\":\"/spec/jobTemplate/spec/template/spec/hostAliases\",\"value\":[{\"ip\":\"$ingress_ip\",\"hostnames\":[\"api-internal.mosip.localhost\",\"iam.mosip.localhost\",\"api.mosip.localhost\"]}]}]" \
       2>/dev/null || true
-  done
-
-  # Create Idrepo.properties override — the test image has IDRepo.properties
-  # (wrong case) with hardcoded QA URLs. This creates the correctly-cased file
-  # with local dev values that ConfigManager reads first.
-  echo "  Creating Idrepo.properties override..."
-  local pg_pass kc_pass testrig_secret admin_secret
-  pg_pass=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d)
-  kc_pass=$(kubectl -n keycloak get secret keycloak -o jsonpath='{.data.admin-password}' | base64 -d)
-  testrig_secret=$(kubectl -n keycloak get secret keycloak-client-secrets -o jsonpath='{.data.mosip_testrig_client_secret}' | base64 -d)
-  admin_secret=$(kubectl -n keycloak get secret keycloak-client-secrets -o jsonpath='{.data.mosip_admin_client_secret}' | base64 -d)
-
-  kubectl -n $NS create configmap idrepo-properties \
-    --from-literal=Idrepo.properties="$(cat <<PROPS
-keycloak-external-url=http://iam.mosip.localhost
-keycloak_Password=$kc_pass
-db-server=postgres-postgresql.postgres
-db-port=5432
-postgres-password=$pg_pass
-mosip_testrig_client_secret=$testrig_secret
-mosip_admin_client_secret=$admin_secret
-enableDebug=yes
-usePreConfiguredOtp=false
-mockNotificationChannel=email,phone
-PROPS
-)" --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
-
-  # Mount the properties file into the test pods
-  for cj in $(kubectl -n $NS get cronjob --no-headers 2>/dev/null | awk '{print $1}'); do
-    kubectl -n $NS patch cronjob "$cj" --type='json' -p='[
-      {"op":"add","path":"/spec/jobTemplate/spec/template/spec/volumes/-","value":{"name":"idrepo-props","configMap":{"name":"idrepo-properties"}}},
-      {"op":"add","path":"/spec/jobTemplate/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"idrepo-props","mountPath":"/home/mosip/MosipTestResource/MosipTemporaryTestResource/config/Idrepo.properties","subPath":"Idrepo.properties"}}
-    ]' 2>/dev/null || true
   done
 
   # Apply ingress rules so api-internal.mosip.localhost routes to MOSIP services
