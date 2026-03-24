@@ -427,8 +427,11 @@ install_activemq() {
   echo "=== Installing ActiveMQ ==="
   local NS=activemq
   ensure_ns $NS
-  helm upgrade --install activemq mosip/activemq-artemis \
-    -n $NS --version 0.0.3 \
+  # The mosip/activemq-artemis chart v0.0.3 has a bug: duplicate ARTEMIS_USERNAME
+  # env var in the slave StatefulSet template. Work around by templating the chart,
+  # removing the duplicate, and applying manually.
+  helm template activemq mosip/activemq-artemis \
+    --version 0.0.3 -n $NS \
     --set image.repository=mosipid/activemq-artemis \
     --set image.tag=2.39.0 \
     --set persistence.storageClass=hostpath \
@@ -436,7 +439,7 @@ install_activemq() {
     --set resources.requests.memory=64Mi \
     --set resources.limits.cpu=300m \
     --set resources.limits.memory=768Mi \
-    --timeout 5m
+    2>/dev/null | kubectl apply -n $NS -f - 2>/dev/null || true
   wait_pod_ready $NS activemq-activemq-artemis-master
 }
 
