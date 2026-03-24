@@ -5,14 +5,14 @@
 #
 # Profiles:
 #   minimal — postgres + keycloak + softhsm (~1.5GB RAM)
-#   core    — + kafka + minio + activemq (~3.5GB RAM)
+#   poc     — + kafka + minio + activemq (~3.5GB RAM)
 #   all     — + clamav + msg-gateways + captcha (~5GB RAM)
 #
 # Prerequisites:
 #   - k8s-infra local setup already running (k8s-infra/local/setup.sh minimal)
 #   - helm, kubectl on PATH
 #
-# Usage: ./install-external.sh [minimal|core|all|component|teardown]
+# Usage: ./install-external.sh [minimal|poc|all|component|teardown]
 #
 # NOTE: When installing config-server (in install-services.sh), its deployment
 # strategy should be patched to Recreate to avoid port conflicts during rolling
@@ -544,9 +544,9 @@ case "$COMPONENT" in
     install_ingress
     echo ""
     echo "Minimal external components installed (postgres, keycloak, softhsm)."
-    echo "Use './install-external.sh core' to add kafka, minio, activemq."
+    echo "Use './install-external.sh poc' to add kafka, minio, activemq."
     ;;
-  core)
+  poc)
     add_helm_repos
     install_crds
     install_global_configmap
@@ -592,7 +592,7 @@ case "$COMPONENT" in
   kafka)        install_kafka ;;
   *)
     echo "Unknown component: $COMPONENT"
-    echo "Usage: $0 [minimal|core|all|postgres|keycloak|softhsm|minio|clamav|activemq|kafka|teardown]"
+    echo "Usage: $0 [minimal|poc|all|postgres|keycloak|softhsm|minio|clamav|activemq|kafka|teardown]"
     echo ""
     echo "Profiles:"
     echo "  minimal — postgres + keycloak + softhsm (~1.5GB RAM)"

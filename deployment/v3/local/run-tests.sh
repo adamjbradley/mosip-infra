@@ -124,7 +124,7 @@ install_testrig() {
     minimal)
       module_overrides="--set modules.prereg.enabled=false --set modules.partner.enabled=false --set modules.resident.enabled=false --set modules.auth.enabled=false"
       ;;
-    core)
+    poc)
       module_overrides="--set modules.prereg.enabled=false --set modules.partner.enabled=false --set modules.resident.enabled=false --set modules.auth.enabled=true"
       ;;
     all)
@@ -269,7 +269,7 @@ case "$PROFILE" in
   logs)     show_logs ;;
   teardown) teardown ;;
   run)      run_now ;;
-  minimal|core|all)
+  minimal|poc|all)
     helm repo update 2>/dev/null || true
     run_prereqs
     setup_testrig_ns
@@ -280,11 +280,11 @@ case "$PROFILE" in
     echo "View logs with:     $0 logs"
     ;;
   *)
-    echo "Usage: $0 [minimal|core|all|run|status|logs|teardown]"
+    echo "Usage: $0 [minimal|poc|all|run|status|logs|teardown]"
     echo ""
     echo "Profiles (match your install-services.sh profile):"
     echo "  minimal — masterdata + idrepo tests"
-    echo "  core    — + auth tests"
+    echo "  poc     — + auth tests"
     echo "  all     — + prereg + partner + resident tests"
     echo ""
     echo "Commands:"

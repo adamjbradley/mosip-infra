@@ -19,15 +19,15 @@
 #
 # Profiles:
 #   minimal — config-server + kernel + idrepo + keymanager (~6GB RAM, ~13 pods)
-#   core    — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM, ~21 pods)
+#   poc     — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM, ~21 pods)
 #   all     — + regproc + prereg + admin + pms + mock-abis + resident (~16GB RAM, ~29 pods)
 #
 # Prerequisites:
 #   - MOSIP external components running (./install-external.sh)
 #   - For minimal: ./install-external.sh minimal
-#   - For core/all: ./install-external.sh core (needs kafka, minio, activemq)
+#   - For poc/all: ./install-external.sh poc (needs kafka, minio, activemq)
 #
-# Usage: ./install-services.sh [minimal|core|all|component|teardown|status]
+# Usage: ./install-services.sh [minimal|poc|all|component|teardown|status]
 
 set -e
 set -o errexit
@@ -747,10 +747,10 @@ case "$COMPONENT" in
     echo ""
     echo "Minimal MOSIP services installed."
     echo "Requires: ./install-external.sh minimal"
-    echo "Use './install-services.sh core' to add websub, biosdk, ida, etc."
+    echo "Use './install-services.sh poc' to add websub, biosdk, ida, etc."
     show_status
     ;;
-  core)
+  poc)
     add_helm_repos
     install_conf_secrets        # Layer 0
     install_config_server       # Layer 1
@@ -765,8 +765,8 @@ case "$COMPONENT" in
     install_ida                 # Layer 6
     echo ""
     echo "Core MOSIP services installed."
-    echo "Requires: ./install-external.sh core"
-    echo "Use './install-services.sh all' to add regproc, prereg, admin, pms, resident."
+    echo "Requires: ./install-external.sh poc"
+    echo "Use './install-services.sh all' for full stack (regproc, prereg, admin, pms, resident)."
     show_status
     ;;
   all)
@@ -818,11 +818,11 @@ case "$COMPONENT" in
   resident)         install_resident ;;
   *)
     echo "Unknown component: $COMPONENT"
-    echo "Usage: $0 [minimal|core|all|status|teardown|<component-name>]"
+    echo "Usage: $0 [minimal|poc|all|status|teardown|<component-name>]"
     echo ""
     echo "Profiles (RAM required for MOSIP services only, add ~3GB for external components):"
     echo "  minimal — config-server + kernel + idrepo + keymanager (~6GB RAM)"
-    echo "  core    — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM)"
+    echo "  poc     — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM)"
     echo "  all     — + regproc + prereg + admin + pms + resident (~16GB RAM)"
     echo ""
     echo "Deployment is SEQUENTIAL by dependency layer. Each service waits until"

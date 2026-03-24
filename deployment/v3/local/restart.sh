@@ -5,7 +5,7 @@
 # secrets, or run helm install. It only waits for existing pods to recover
 # in the correct order, restarting stuck pods as needed.
 #
-# Usage: ./restart.sh [minimal|core|all|status]
+# Usage: ./restart.sh [minimal|poc|all|status]
 
 set -e
 set -o pipefail
@@ -129,7 +129,7 @@ wait_layer "Layer 3: Keymanager + BioSDK" \
   "biosdk/biosdk-service"
 
 # Layer 4: Kernel (needs config-server + keymanager)
-if [ "$PROFILE" != "minimal" ] && [ "$PROFILE" != "core" ] && [ "$PROFILE" != "all" ]; then
+if [ "$PROFILE" != "minimal" ] && [ "$PROFILE" != "poc" ] && [ "$PROFILE" != "all" ]; then
   echo "Unknown profile: $PROFILE"; exit 1
 fi
 
@@ -143,7 +143,7 @@ wait_layer "Layer 5: IdRepo" \
   "idrepo/identity" "idrepo/credential" "idrepo/vid"
 
 # Core profile adds these
-if [ "$PROFILE" = "core" ] || [ "$PROFILE" = "all" ]; then
+if [ "$PROFILE" = "poc" ] || [ "$PROFILE" = "all" ]; then
   wait_layer "Layer 6: Core services" \
     "websub/websub-consolidator" "websub/websub" \
     "packetmanager/packetmanager" "datashare/datashare" \
