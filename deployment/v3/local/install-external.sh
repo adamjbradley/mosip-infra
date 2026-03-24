@@ -284,6 +284,13 @@ install_keycloak() {
     --set postgresql.image.tag=14.2.0-debian-10-r70 \
     --set global.security.allowInsecureImages=true \
     --timeout 10m
+  # Keycloak's liveness probe is too aggressive for local dev (periodSeconds=1,
+  # failureThreshold=3 means only 3s of failures allowed after 300s delay).
+  # On a constrained node Keycloak takes 3-5 min to boot. Relax the probe.
+  kubectl -n $NS patch statefulset keycloak --type='json' \
+    -p='[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/failureThreshold","value":60},{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/periodSeconds","value":10}]' \
+    2>/dev/null || true
+
   # Keycloak's internal postgres must be ready first
   wait_pod_ready $NS keycloak-postgresql
   # Then Keycloak itself (first boot takes 3-5 min for DB migration)

@@ -96,7 +96,7 @@ setup_testrig_ns() {
 
   # Copy configmaps
   copy_resource configmap global default $NS
-  copy_resource configmap keycloak-host keycloak $NS
+  copy_resource configmap keycloak-host default $NS   # keycloak-host is in default ns
   copy_resource configmap artifactory-share artifactory $NS
   copy_resource configmap config-server-share config-server $NS
 
@@ -154,6 +154,16 @@ install_testrig() {
     --set enable_insecure=true \
     $module_overrides \
     --timeout 5m
+
+  # Patch cronjob init containers — chart hardcodes openjdk:11-jre (removed from
+  # Docker Hub) and the SSL import script references paths that don't exist in
+  # replacement images. For local dev (HTTP, no SSL), skip the init entirely.
+  echo "  Patching cronjob init containers (skip cacerts for local dev)..."
+  for cj in $(kubectl -n $NS get cronjob --no-headers 2>/dev/null | awk '{print $1}'); do
+    kubectl -n $NS patch cronjob "$cj" --type='json' \
+      -p='[{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/initContainers/0/image","value":"eclipse-temurin:11-jre"},{"op":"replace","path":"/spec/jobTemplate/spec/template/spec/initContainers/0/command","value":["/bin/bash","-c","echo skipping cacerts for local dev"]}]' \
+      2>/dev/null || true
+  done
 
   echo "  Apitestrig installed (cronjob: every 6 hours)."
 }
