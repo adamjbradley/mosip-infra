@@ -98,7 +98,7 @@ setup_testrig_ns() {
   copy_resource configmap global default $NS
   # Create keycloak-host with testrig-compatible URL (no /auth suffix — testrig appends it)
   kubectl -n $NS create configmap keycloak-host \
-    --from-literal=keycloak-internal-url="http://keycloak.keycloak/auth" \
+    --from-literal=keycloak-internal-url="http://keycloak.keycloak" \
     --from-literal=keycloak-internal-host="keycloak.keycloak" \
     --from-literal=keycloak-external-url="http://iam.mosip.localhost" \
     --from-literal=keycloak-external-host="iam.mosip.localhost" \
