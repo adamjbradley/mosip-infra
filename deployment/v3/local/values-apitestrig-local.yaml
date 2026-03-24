@@ -1,0 +1,24 @@
+# Local dev overrides for apitestrig.
+# Only enable modules that are deployed in the minimal profile.
+# Disable modules that require services not in minimal (prereg, partner, resident).
+modules:
+  prereg:
+    enabled: false    # Requires prereg services (not in minimal)
+  masterdata:
+    enabled: true
+    image:
+      repository: mosipid/apitest-masterdata
+      tag: 1.3.0
+      pullPolicy: IfNotPresent
+  idrepo:
+    enabled: true
+    image:
+      repository: mosipid/apitest-idrepo
+      tag: 1.3.0
+      pullPolicy: IfNotPresent
+  partner:
+    enabled: false    # Requires PMS services (not in minimal)
+  resident:
+    enabled: false    # Requires resident services (not in minimal)
+  auth:
+    enabled: false    # Requires IDA services (not in minimal)
