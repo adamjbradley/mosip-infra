@@ -310,7 +310,7 @@ install_keycloak() {
     --set keycloak.realms.mosip.realm_config.smtpServer.starttls="false" \
     --set keycloak.realms.mosip.realm_config.smtpServer.ssl="false" \
     --set keycloak.realms.mosip.realm_config.smtpServer.auth="false" \
-    --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost:30080/auth" \
+    --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost/auth" \
     --wait --wait-for-jobs --timeout 15m 2>/dev/null || {
       # keycloak-init may fail on opencrvs client (token expiry during long init).
       # Re-run to complete remaining clients (idempotent — existing clients are skipped).
@@ -327,7 +327,7 @@ install_keycloak() {
         --set keycloak.realms.mosip.realm_config.smtpServer.starttls="false" \
         --set keycloak.realms.mosip.realm_config.smtpServer.ssl="false" \
         --set keycloak.realms.mosip.realm_config.smtpServer.auth="false" \
-        --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost:30080/auth" \
+        --set "keycloak.realms.mosip.realm_config.attributes.frontendUrl=http://iam.mosip.localhost/auth" \
         --wait --wait-for-jobs --timeout 15m 2>/dev/null || true
     }
   echo "  Keycloak initialization complete."
