@@ -19,7 +19,7 @@
 #
 # Profiles:
 #   minimal — config-server + kernel + idrepo + keymanager (~6GB RAM, ~13 pods)
-#   poc     — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM, ~21 pods)
+#   poc     — + websub + biosdk + packetmanager + datashare + ida + regproc + mock-abis (~14GB RAM, ~30 pods)
 #   all     — + regproc + prereg + admin + pms + mock-abis + resident (~16GB RAM, ~29 pods)
 #
 # Prerequisites:
@@ -762,18 +762,22 @@ case "$COMPONENT" in
     install_conf_secrets        # Layer 0
     install_config_server       # Layer 1
     install_artifactory         # Layer 1.5
+    install_mock_smtp           # Needed for notifier health check
     install_keymanager          # Layer 2
     install_kernel              # Layer 3
+    install_biosdk              # Layer 3.5 (identity needs biosdk at startup)
     install_idrepo              # Layer 4
     install_websub              # Layer 5
-    install_biosdk              # Layer 5
     install_packetmanager       # Layer 5
     install_datashare           # Layer 5
+    install_mock_abis           # Layer 5.5 (regproc needs ABIS)
+    install_regproc             # Layer 6 (registration processing workflow)
     install_ida                 # Layer 6
     echo ""
-    echo "Core MOSIP services installed."
+    echo "PoC MOSIP services installed."
+    echo "Demonstrates: identity store, registration workflow, biometric dedup, ID auth."
     echo "Requires: ./install-external.sh poc"
-    echo "Use './install-services.sh all' for full stack (regproc, prereg, admin, pms, resident)."
+    echo "Use './install-services.sh all' for full stack (prereg, admin, pms, resident)."
     show_status
     ;;
   all)
@@ -829,7 +833,7 @@ case "$COMPONENT" in
     echo ""
     echo "Profiles (RAM required for MOSIP services only, add ~3GB for external components):"
     echo "  minimal — config-server + kernel + idrepo + keymanager (~6GB RAM)"
-    echo "  poc     — + websub + biosdk + packetmanager + datashare + ida (~10GB RAM)"
+    echo "  poc     — + websub + ida + regproc + mock-abis (~14GB RAM, full registration + auth)"
     echo "  all     — + regproc + prereg + admin + pms + resident (~16GB RAM)"
     echo ""
     echo "Deployment is SEQUENTIAL by dependency layer. Each service waits until"

@@ -142,11 +142,15 @@ wait_layer "Layer 4: Kernel" \
 wait_layer "Layer 5: IdRepo" \
   "idrepo/identity" "idrepo/credential" "idrepo/vid"
 
-# Core profile adds these
+# PoC profile adds these
 if [ "$PROFILE" = "poc" ] || [ "$PROFILE" = "all" ]; then
-  wait_layer "Layer 6: Core services" \
+  wait_layer "Layer 6: PoC services" \
     "websub/websub-consolidator" "websub/websub" \
     "packetmanager/packetmanager" "datashare/datashare" \
+    "abis/mock-abis" "abis/mock-mv" \
+    "regproc/regproc-workflow" "regproc/regproc-status" \
+    "regproc/regproc-camel" "regproc/regproc-pktserver" \
+    "regproc/regproc-group1" "regproc/regproc-group2" \
     "ida/ida-auth" "ida/ida-internal" "ida/ida-otp"
 fi
 
