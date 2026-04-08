@@ -421,6 +421,13 @@ install_config_server() {
     2>/dev/null || true
 
   wait_ready $NS config-server
+
+  # Apply ALL overrides + git patches via the shared configure script.
+  # This is the ONLY place config-server env vars should be set.
+  echo "  Configuring config-server (overrides + git patches)..."
+  bash "$SCRIPT_DIR/configure-config-server.sh"
+
+  wait_ready $NS config-server
 }
 
 # ---------- Layer 1.5: artifactory ----------
@@ -481,6 +488,14 @@ install_kernel() {
     helm_install $NS "$svc" "$svc" --set enable_insecure=true
     # Patch init containers BEFORE waiting — openjdk:11-jre is removed from Docker Hub
     skip_cacerts_init $NS "$svc"
+    # idgenerator generates 200K VIDs + 200K UINs on first start.
+    # Default startup probe (60 x 10s = 10 min) is too short on constrained nodes.
+    # Extend to 30 min to avoid CrashLoopBackOff during bulk generation.
+    if [ "$svc" = "idgenerator" ]; then
+      kubectl -n $NS patch deployment idgenerator --type='json' -p='[
+        {"op":"replace","path":"/spec/template/spec/containers/0/startupProbe/failureThreshold","value":180}
+      ]' 2>/dev/null || true
+    fi
     wait_ready $NS "$svc"
   done
 
@@ -504,7 +519,7 @@ install_idrepo() {
     -n $NS --version $CHART_VERSION \
     --wait --wait-for-jobs --timeout 10m
 
-  for svc in identity credential vid; do
+  for svc in identity credential credentialrequest vid; do
     helm_install $NS "$svc" "$svc"
     skip_cacerts_init $NS "$svc"
     wait_ready $NS "$svc"
@@ -570,7 +585,11 @@ install_ida() {
   echo "  Skipping ida-keygen (keys generated on first use)..."
 
   for svc in ida-auth ida-internal ida-otp; do
-    helm_install $NS "$svc" "$svc" --set enable_insecure=true
+    # IDA services need more memory — OOMKilled at 1Gi default
+    helm_install $NS "$svc" "$svc" \
+      --set enable_insecure=true \
+      --set resources.limits.memory=1536Mi \
+      --set "additionalResources.javaOpts=-Xms256m -Xmx1g"
     skip_cacerts_init $NS "$svc"
     wait_ready $NS "$svc"
   done
@@ -589,11 +608,68 @@ install_regproc() {
     -n $NS --version $CHART_VERSION \
     --wait --wait-for-jobs --timeout 10m
 
+  # Pre-create PVCs with Helm ownership metadata so charts can adopt them.
+  # regproc-pktserver references regproc-group1's PVC (shared storage), but
+  # pktserver deploys before group1 — so the PVC must exist first.
+  # Pre-create static PVs + PVCs for regproc shared volumes.
+  # Docker Desktop's local-path provisioner only supports ReadWriteOnce, so we
+  # create static hostPath PVs with ReadWriteMany (safe on a single-node cluster)
+  # and bind the PVCs directly to them via volumeName.
+  for pvc in regproc-group1 regproc-group2; do
+    if ! kubectl get pv "${pvc}-pv" &>/dev/null; then
+      kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ${pvc}-pv
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: hostpath
+  hostPath:
+    path: /tmp/mosip/${pvc}
+    type: DirectoryOrCreate
+  claimRef:
+    namespace: $NS
+    name: $pvc
+EOF
+    fi
+    if ! kubectl -n $NS get pvc "$pvc" &>/dev/null; then
+      kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $pvc
+  namespace: $NS
+  labels:
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    meta.helm.sh/release-name: $pvc
+    meta.helm.sh/release-namespace: $NS
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: hostpath
+  volumeName: ${pvc}-pv
+  resources:
+    requests:
+      storage: 5Gi
+EOF
+    fi
+  done
+
   for svc in regproc-workflow regproc-status regproc-camel regproc-pktserver regproc-group1 regproc-group2; do
-    # regproc-group1 and regproc-pktserver need PVCs — use hostpath storage
+    # group1/group2: use existingClaim so Helm doesn't try to create/resize the PVC.
+    # Disable virusscanner health indicator — no ClamAV in local env.
     local extra_args=""
-    if [ "$svc" = "regproc-group1" ] || [ "$svc" = "regproc-pktserver" ]; then
-      extra_args="--set persistence.storageClass=hostpath"
+    if [ "$svc" = "regproc-group1" ] || [ "$svc" = "regproc-group2" ]; then
+      # Use existingClaim so Helm doesn't try to create/resize the pre-created PVC.
+      # Virus scanner health check requires the mock ClamAV service at clamav.clamav:3310
+      # (deployed by install-external.sh poc via install_mock_clamav).
+      extra_args="--set persistence.storageClass=hostpath --set persistence.existingClaim=${svc}"
     fi
     helm_install $NS "$svc" "$svc" $extra_args
     skip_cacerts_init $NS "$svc"
@@ -620,9 +696,29 @@ install_prereg() {
 install_pms() {
   echo "=== Layer 6: pms ==="
   local NS=pms
+  local PMS_CHART_VERSION=12.2.2
   setup_ns $NS
-  install_mosip_chart $NS pms-partner pms-partner
-  install_mosip_chart $NS pms-policy pms-policy
+  # PMS charts use version 12.2.x, not the standard 1.3.0
+  echo "  Installing pms-partner..."
+  helm upgrade --install pms-partner mosip/pms-partner \
+    -n "$NS" --version "$PMS_CHART_VERSION" \
+    --set "additionalResources.javaOpts=$JVM_OPTS" \
+    --set resources.requests.cpu=$REQ_CPU \
+    --set resources.requests.memory=$REQ_MEM \
+    --set resources.limits.cpu=$LIM_CPU \
+    --set resources.limits.memory=$LIM_MEM \
+    --timeout 5m
+  wait_ready $NS pms-partner
+  echo "  Installing pms-policy..."
+  helm upgrade --install pms-policy mosip/pms-policy \
+    -n "$NS" --version "$PMS_CHART_VERSION" \
+    --set "additionalResources.javaOpts=$JVM_OPTS" \
+    --set resources.requests.cpu=$REQ_CPU \
+    --set resources.requests.memory=$REQ_MEM \
+    --set resources.limits.cpu=$LIM_CPU \
+    --set resources.limits.memory=$LIM_MEM \
+    --timeout 5m
+  wait_ready $NS pms-policy
 }
 
 # ---------- Layer 6: mock-abis ----------
@@ -670,12 +766,20 @@ install_captcha() {
   echo "=== Layer 6: captcha ==="
   local NS=captcha
   ensure_ns $NS
+  # Captcha chart needs mosip-captcha secret with prereg keys.
+  # Without it: CreateContainerConfigError.
+  if ! kubectl -n $NS get secret mosip-captcha &>/dev/null; then
+    kubectl -n $NS create secret generic mosip-captcha \
+      --from-literal=prereg-captcha-site-key=placeholder \
+      --from-literal=prereg-captcha-secret-key=placeholder
+  fi
   helm upgrade --install captcha mosip/captcha \
     -n $NS --version 0.1.0 \
     --set resources.requests.cpu=10m \
     --set resources.requests.memory=64Mi \
     --set resources.limits.cpu=500m \
-    --set resources.limits.memory=$LIM_MEM \
+    --set resources.limits.memory=1536Mi \
+    --set "additionalResources.javaOpts=-Xms256m -Xmx512m" \
     --timeout 5m
 }
 
@@ -685,6 +789,7 @@ install_masterdata_loader() {
   echo "=== Layer 6: masterdata-loader ==="
   local NS=masterdata-loader
   setup_ns $NS
+  ensure_db_secret $NS
   helm upgrade --install masterdata-loader mosip/masterdata-loader \
     -n $NS --version $CHART_VERSION \
     --wait --wait-for-jobs --timeout 10m
@@ -696,7 +801,11 @@ install_resident() {
   echo "=== Layer 6: resident ==="
   local NS=resident
   setup_ns $NS
-  helm_install $NS resident resident --set enable_insecure=true
+  # Resident needs more memory — OOMKilled at 1Gi default
+  helm_install $NS resident resident \
+    --set enable_insecure=true \
+    --set resources.limits.memory=1536Mi \
+    --set "additionalResources.javaOpts=-Xms256m -Xmx1g"
   skip_cacerts_init $NS resident
   wait_ready $NS resident
   helm upgrade --install resident-ui mosip/resident-ui \
@@ -782,6 +891,7 @@ case "$COMPONENT" in
     install_datashare           # Layer 5
     install_mock_abis           # Layer 5.5 (regproc needs ABIS)
     install_regproc             # Layer 6 (registration processing workflow)
+    install_masterdata_loader   # Layer 6 (IDA caches title/lang data at startup)
     install_ida                 # Layer 6
     echo ""
     echo "PoC MOSIP services installed."
@@ -796,12 +906,12 @@ case "$COMPONENT" in
     install_config_server       # Layer 1
     install_artifactory         # Layer 1.5
     install_captcha             # Layer 1.5
+    install_mock_smtp           # Layer 2.5 — must be before kernel (notifier health check needs SMTP)
     install_keymanager          # Layer 2
     install_kernel              # Layer 3
+    install_biosdk              # Layer 3.5 — must be before idrepo (identity needs biosdk at startup)
     install_idrepo              # Layer 4
     install_websub              # Layer 5
-    install_mock_smtp           # Layer 5
-    install_biosdk              # Layer 5
     install_packetmanager       # Layer 5
     install_datashare           # Layer 5
     install_masterdata_loader   # Layer 6

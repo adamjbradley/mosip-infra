@@ -5,8 +5,8 @@
 #
 # Profiles:
 #   minimal — postgres + keycloak + softhsm (~1.5GB RAM)
-#   poc     — + kafka + minio + activemq (~3.5GB RAM)
-#   all     — + clamav + msg-gateways + captcha (~5GB RAM)
+#   poc     — + kafka + minio + activemq + mock-clamav (~3.5GB RAM)
+#   all     — + real clamav + msg-gateways + captcha (~5GB RAM)
 #
 # Prerequisites:
 #   - k8s-infra local setup already running (k8s-infra/local/setup.sh minimal)
@@ -421,6 +421,128 @@ install_clamav() {
   wait_pod_ready $NS clamav
 }
 
+# ---------- mock-clamav ----------
+# Lightweight Python mock of the ClamAV clamd protocol for PoC deployments.
+# Real ClamAV needs 512MB+ RAM for virus definitions which is expensive locally.
+# The mock responds correctly to the capybara clamav-client 1.0.4 library used
+# by MOSIP's kernel-virusscanner-clamav service:
+#   nVERSIONCOMMANDS\n  →  single-line "ClamAV version| COMMANDS: ..." response
+#   zINSTREAM\0 + data  →  "stream: OK\0"
+#   nPING\n             →  "PONG\n"
+# The service is named "clamav" in namespace "clamav" so it resolves as
+# clamav.clamav:3310 — matching regproc-group1/group2 config properties.
+
+install_mock_clamav() {
+  echo "=== Installing mock ClamAV (PoC) ==="
+  local NS=clamav
+  ensure_ns $NS
+  kubectl apply -n $NS -f - <<'YAML'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clamav-mock-script
+  namespace: clamav
+data:
+  server.py: |
+    import socket, threading
+
+    VERSION_COMMANDS = (
+        "ClamAV 0.103.9/26892/Mon Mar 11 10:35:44 2024"
+        "| COMMANDS: SCAN QUIT RELOAD PING CONTSCAN VERSIONCOMMANDS VERSION END "
+        "SHUTDOWN MULTISCAN FILDES STATS IDSESSION INSTREAM DETSTATSCLEAR DETSTATS ALLMATCHSCAN\n"
+    )
+
+    def handle(c, addr):
+        try:
+            data = c.recv(4096)
+            if not data:
+                return
+            raw = data.strip(b"\n\x00 ").lstrip(b"nz")
+            cmd_end = raw.find(b"\x00")
+            cmd = (raw[:cmd_end] if cmd_end >= 0 else raw).decode(errors="replace")
+            if "VERSIONCOMMANDS" in cmd:
+                c.send(VERSION_COMMANDS.encode())
+            elif "INSTREAM" in cmd:
+                # Drain INSTREAM chunks (4-byte big-endian length + data, terminated by 0x00000000)
+                buf = raw[cmd_end + 1:] if cmd_end >= 0 else b""
+                while True:
+                    if len(buf) >= 4:
+                        length = int.from_bytes(buf[:4], "big")
+                        if length == 0:
+                            break
+                        buf = buf[4 + length:]
+                    chunk = c.recv(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                c.send(b"stream: OK\x00")
+            elif "PING" in cmd:
+                c.send(b"PONG\n")
+        except Exception:
+            pass
+        finally:
+            c.close()
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", 3310))
+    srv.listen(10)
+    print("Mock ClamAV listening on :3310", flush=True)
+    while True:
+        c, addr = srv.accept()
+        threading.Thread(target=handle, args=(c, addr), daemon=True).start()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clamav
+  namespace: clamav
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: clamav
+  template:
+    metadata:
+      labels:
+        app: clamav
+    spec:
+      containers:
+      - name: clamav
+        image: python:3.11-alpine
+        command: ["python", "/mock/server.py"]
+        ports:
+        - containerPort: 3310
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            cpu: 100m
+            memory: 64Mi
+        volumeMounts:
+        - name: script
+          mountPath: /mock
+      volumes:
+      - name: script
+        configMap:
+          name: clamav-mock-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clamav
+  namespace: clamav
+spec:
+  selector:
+    app: clamav
+  ports:
+  - port: 3310
+    targetPort: 3310
+YAML
+  wait_pod_ready $NS clamav
+}
+
 # ---------- activemq ----------
 
 install_activemq() {
@@ -440,6 +562,35 @@ install_activemq() {
     --set resources.limits.cpu=300m \
     --set resources.limits.memory=768Mi \
     2>/dev/null | kubectl apply -n $NS -f - 2>/dev/null || true
+
+  # The chart's post-install test pods (amqp, core, cluster-formation) are rendered
+  # as standalone Pods and applied above. They fail immediately because they run
+  # `./artemis` with no working directory set (binary is at /var/lib/artemis/data/bin/).
+  # They serve no operational purpose — delete them to keep the namespace clean.
+  kubectl delete pod -n $NS \
+    activemq-activemq-artemis-amqp \
+    activemq-activemq-artemis-core \
+    activemq-activemq-artemis-cluster-formation \
+    2>/dev/null || true
+
+  # ActiveMQ slave probe fixes:
+  # Root cause: the Artemis backup broker (slave) never opens port 61616 — in
+  # replication HA mode the slave does not start its acceptors; only the live master
+  # accepts client connections. The chart probes all check port 61616 (netcat/TCP),
+  # so they all fail permanently, causing CrashLoopBackOff.
+  # Additionally, the web console (8161) stops ~46s after sync completes, so HTTP
+  # probes also fail.
+  # Fix: probe that the JVM process (PID 1) is alive — reliable for both startup
+  # and steady-state. Remove readiness probe entirely (the slave should never serve
+  # traffic; K8s defaults to Ready=true when no readiness probe is configured).
+  kubectl patch statefulset activemq-activemq-artemis-slave -n $NS --type='json' \
+    -p='[
+      {"op":"replace","path":"/spec/template/spec/containers/0/startupProbe","value":{"exec":{"command":["/bin/sh","-c","kill -0 1"]},"initialDelaySeconds":15,"periodSeconds":5,"failureThreshold":12,"successThreshold":1,"timeoutSeconds":5}},
+      {"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe","value":{"exec":{"command":["/bin/sh","-c","kill -0 1"]},"initialDelaySeconds":30,"periodSeconds":15,"failureThreshold":4,"successThreshold":1,"timeoutSeconds":5}},
+      {"op":"remove","path":"/spec/template/spec/containers/0/readinessProbe"}
+    ]' \
+    2>/dev/null || true
+
   wait_pod_ready $NS activemq-activemq-artemis-master
 }
 
@@ -462,6 +613,20 @@ install_kafka() {
     --timeout 5m
   # Zookeeper must be ready before Kafka
   wait_pod_ready $NS kafka-zookeeper
+
+  # Kafka OOMKill fix: the chart default (768Mi) is not enough when the broker
+  # recovers 700+ topic partitions from ZooKeeper on restart. Increase to 3Gi.
+  kubectl patch statefulset kafka -n $NS --type='json' \
+    -p='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/memory","value":"3Gi"},{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/memory","value":"1Gi"}]' \
+    2>/dev/null || true
+
+  # Kafka liveness probe fix: default initialDelaySeconds=10 + failureThreshold=3
+  # gives only 40s total before the probe kills the broker. Loading 700+ partitions
+  # from ZooKeeper takes 3+ minutes. Relax to allow full startup.
+  kubectl patch statefulset kafka -n $NS --type='json' \
+    -p='[{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/initialDelaySeconds","value":120},{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/failureThreshold","value":10},{"op":"replace","path":"/spec/template/spec/containers/0/livenessProbe/periodSeconds","value":15}]' \
+    2>/dev/null || true
+
   wait_pod_ready $NS "kafka-0"
 
   # Kafka UI
@@ -560,10 +725,11 @@ case "$COMPONENT" in
     install_kafka
     install_minio
     install_activemq
+    install_mock_clamav   # Lightweight mock clamd — required by regproc-group1/group2 health checks
     install_ingress
     echo ""
     echo "Core external components installed."
-    echo "Use './install-external.sh all' to add clamav, msg-gateways, captcha."
+    echo "Use './install-external.sh all' to add real clamav, msg-gateways, captcha."
     ;;
   all)
     add_helm_repos
@@ -591,16 +757,17 @@ case "$COMPONENT" in
   softhsm)      install_softhsm ;;
   minio)        install_minio ;;
   clamav)       install_clamav ;;
+  mock-clamav)  install_mock_clamav ;;
   activemq)     install_activemq ;;
   kafka)        install_kafka ;;
   *)
     echo "Unknown component: $COMPONENT"
-    echo "Usage: $0 [minimal|poc|all|postgres|keycloak|softhsm|minio|clamav|activemq|kafka|teardown]"
+    echo "Usage: $0 [minimal|poc|all|postgres|keycloak|softhsm|minio|clamav|mock-clamav|activemq|kafka|teardown]"
     echo ""
     echo "Profiles:"
-    echo "  minimal — postgres + keycloak + softhsm (~1.5GB RAM)"
-    echo "  core    — + kafka + minio + activemq (~3.5GB RAM)"
-    echo "  all     — + clamav + msg-gateways + captcha (~5GB RAM)"
+    echo "  minimal    — postgres + keycloak + softhsm (~1.5GB RAM)"
+    echo "  poc        — + kafka + minio + activemq + mock-clamav (~3.5GB RAM)"
+    echo "  all        — + real clamav + msg-gateways + captcha (~5GB RAM)"
     exit 1
     ;;
 esac
