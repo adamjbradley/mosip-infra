@@ -49,6 +49,8 @@ if [ "$PATCHES_ONLY" = false ]; then
 
   kubectl -n $NS set env deployment/config-server \
     ${GIT_URI_OVERRIDE:+"$GIT_URI_OVERRIDE"} \
+    `# --- Enable periodic git re-read so file patches take effect ---` \
+    "SPRING_CLOUD_CONFIG_SERVER_COMPOSITE_0_REFRESH_RATE=30" \
     \
     `# --- Keycloak URLs (no /auth suffix — config properties add it) ---` \
     "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_KEYCLOAK_INTERNAL_URL=http://keycloak.keycloak" \
@@ -89,7 +91,8 @@ if [ "$PATCHES_ONLY" = false ]; then
     `# --- Regproc agegroup config ---` \
     'SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_REGPROC_PACKET_CLASSIFIER_TAGGING_AGEGROUP_RANGES={"INFANT":"0-5","MINOR":"6-17","ADULT":"18-200"}' \
     \
-    `# --- SPRING_APPLICATION_JSON for hyphenated properties that can't be env vars ---` \
+    `# --- SPRING_APPLICATION_JSON for properties that can't be env vars ---` \
+    `# Includes: hyphenated names, underscore names (hibernate), etc.` \
     'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"","mosip.kernel.otp.expiry-time":"10"}}}}}}' \
     2>/dev/null
 
@@ -117,6 +120,12 @@ for REPO in /tmp/config-repo-*/; do
   # OTP expiry 10s (test rig reads from git source, not overrides)
   sed -i "s/^mosip.kernel.otp.expiry-time=.*/mosip.kernel.otp.expiry-time=10/" "$REPO/application-default.properties" 2>/dev/null
 
+  # Enable Hibernate L2 cache (improves warm performance after first queries)
+  # NOTE: With refreshRate=0, this only takes effect if config-server is restarted
+  # AFTER this patch. The env var restart in Step 1 handles this.
+  sed -i "s/hibernate.cache.use_second_level_cache=false/hibernate.cache.use_second_level_cache=true/" "$REPO/kernel-default.properties" 2>/dev/null
+  sed -i "s/hibernate.cache.use_query_cache=false/hibernate.cache.use_query_cache=true/" "$REPO/kernel-default.properties" 2>/dev/null
+
   # Biosdk URL fix in id-repository properties
   sed -i "s|/biosdk-service/{extractionFormat}/extracttemplates|/biosdk-service/extract-template|" "$REPO/id-repository-default.properties" 2>/dev/null
 
@@ -143,6 +152,29 @@ for REPO in /tmp/config-repo-*/; do
 done
 echo "Patched $PATCHED config repos"
 ' 2>/dev/null
+
+# Force config-server to re-read the patched git clone files
+kubectl -n $NS exec deploy/config-server -c config-server -- \
+  wget -q -O /dev/null --timeout=5 --post-data="" "http://localhost:8088/config-server/actuator/refresh" 2>/dev/null || true
+
+# ─── Step 4: Disable nginx upstream retries ─────────────────────────────────
+# Without this, nginx retries timed-out requests on the same backend forever,
+# and the test rig client never gets a response (even a 504).
+echo "  Disabling nginx upstream retries..."
+kubectl -n ingress-nginx patch cm ingress-nginx-controller --type merge \
+  -p '{"data":{"proxy-next-upstream":"off","proxy-next-upstream-tries":"1"}}' 2>/dev/null || true
+
+# ─── Step 5: Restart all kernel services to refresh Keycloak tokens ─────────
+# After config-server changes, services have stale cached Keycloak tokens.
+# Most critically, auditmanager's token becomes invalid which causes every
+# masterdata write/update API call to block for 180s (the audit retry timeout).
+# This single issue caused ALL tests to hang on the fresh deployment.
+echo "  Restarting kernel + IDA services (token refresh)..."
+kubectl -n kernel rollout restart deployment --all 2>/dev/null || true
+kubectl -n idrepo rollout restart deployment --all 2>/dev/null || true
+kubectl -n ida rollout restart deployment --all 2>/dev/null || true
+kubectl -n pms rollout restart deployment --all 2>/dev/null || true
+kubectl -n admin rollout restart deployment --all 2>/dev/null || true
 
 echo "  Config-server fully configured."
 echo "  WARNING: Do not set env vars on config-server after this point."
