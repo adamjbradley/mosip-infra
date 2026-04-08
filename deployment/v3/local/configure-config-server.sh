@@ -135,13 +135,21 @@ for REPO in /tmp/config-repo-*/; do
   grep -q "mosip.admin.batch.name.delimiter=," "$REPO/admin-default.properties" 2>/dev/null || \
     echo "mosip.admin.batch.name.delimiter=," >> "$REPO/admin-default.properties"
 
-  # Add mosip-testrig-client to allowed audience in all relevant property files
+  # Add mosip-testrig-client to allowed audience in ALL property files that have it
   for f in id-authentication-internal-default.properties \
            id-authentication-default.properties \
+           id-repository-default.properties \
            kernel-default.properties \
            partner-management-default.properties \
            data-share-default.properties \
-           admin-default.properties; do
+           admin-default.properties \
+           hotlist-default.properties \
+           digital-card-default.properties \
+           registration-processor-default.properties \
+           pre-registration-default.properties \
+           resident-default.properties \
+           syncdata-default.properties \
+           packet-manager-default.properties; do
     if [ -f "$REPO/$f" ] && grep -q "^auth.server.admin.allowed.audience=" "$REPO/$f" && \
        ! grep -q "mosip-testrig-client" "$REPO/$f"; then
       sed -i "s/^auth.server.admin.allowed.audience=.*/&,mosip-testrig-client/" "$REPO/$f"
