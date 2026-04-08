@@ -93,7 +93,7 @@ if [ "$PATCHES_ONLY" = false ]; then
     \
     `# --- SPRING_APPLICATION_JSON for properties that can't be env vars ---` \
     `# Includes: hyphenated names, underscore names (hibernate), etc.` \
-    'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"","mosip.kernel.otp.expiry-time":"10"}}}}}}' \
+    'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"ara,fra","mosip.kernel.otp.expiry-time":"10"}}}}}}' \
     2>/dev/null
 
   echo "  Waiting for config-server restart..."
