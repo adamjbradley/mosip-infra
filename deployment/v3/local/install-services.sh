@@ -455,11 +455,6 @@ install_keymanager() {
   setup_ns $NS
   copy_cm softhsm-kernel-share softhsm $NS
 
-  # NOTE: keygen job is skipped on local dev — it has a known NPE with
-  # Spring Boot 3.x classloader when loading the JDBC driver class.
-  # Keymanager generates keys on first request if they don't exist.
-  echo "  Skipping keygen (keys generated on first use)..."
-
   echo "  Installing keymanager service..."
   helm upgrade --install keymanager mosip/keymanager \
     -n $NS --version $CHART_VERSION \
@@ -470,6 +465,72 @@ install_keymanager() {
     --set resources.limits.memory=$LIM_MEM \
     --timeout 5m
   wait_ready $NS keymanager
+
+  # Run keygen to generate master keys + 10K ZK encryption keys.
+  # The Helm chart's keygen image (keys-generator:1.3.0) has a Spring Boot 3.x
+  # PropertiesLauncher NPE when the JDBC driver class is null. Fix: pass
+  # -Dspring.datasource.driver-class-name=org.postgresql.Driver as a JVM arg.
+  echo "  Running keygen (generates master keys + ZK encryption keys)..."
+  kubectl -n $NS delete job keygen-zk 2>/dev/null || true
+  cat <<'KEYGEN_JOB' | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keygen-zk
+  namespace: keymanager
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: keygen
+        image: mosipid/keys-generator:1.3.0
+        imagePullPolicy: IfNotPresent
+        command: ["./configure_start.sh"]
+        args:
+        - "java"
+        - "-jar"
+        - "-Dloader.path=/home/mosip/additional_jars/"
+        - "-Dspring.cloud.config.label=v1.3.0"
+        - "-Dspring.cloud.config.name=kernel"
+        - "-Dspring.profiles.active=default"
+        - "-Dspring.cloud.config.uri=http://config-server.config-server/config"
+        - "-Dspring.datasource.driver-class-name=org.postgresql.Driver"
+        - "./keys-generator.jar"
+        env:
+        - name: container_user
+          value: "mosip"
+        - name: JDK_JAVA_OPTIONS
+          value: "-Xms512m -Xmx2g -Dspring.datasource.driver-class-name=org.postgresql.Driver"
+        - name: work_dir
+          value: "/home/mosip"
+        - name: hsm_local_dir_name
+          value: "hsm-client"
+        - name: loader_path_env
+          value: "/home/mosip/additional_jars/"
+        - name: spring_config_name_env
+          value: "kernel"
+        - name: mosip_role
+          value: "keygen"
+        envFrom:
+        - configMapRef:
+            name: global
+        - configMapRef:
+            name: config-server-share
+        - configMapRef:
+            name: artifactory-share
+        - configMapRef:
+            name: softhsm-kernel-share
+        resources:
+          requests:
+            memory: "1Gi"
+          limits:
+            memory: "3Gi"
+KEYGEN_JOB
+  kubectl -n $NS wait --for=condition=complete job/keygen-zk --timeout=600s
+  echo "  Keygen completed (master keys + ZK encryption keys generated)."
 }
 
 # ---------- Layer 3: kernel ----------

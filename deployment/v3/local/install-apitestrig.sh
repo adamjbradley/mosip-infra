@@ -693,6 +693,7 @@ metadata:
   name: smtp-websocket
   namespace: mock-smtp
   annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
@@ -987,11 +988,15 @@ done
 echo ""
 echo "=== Step 10: Applying performance optimizations ==="
 
-# 10a. Config-server: re-apply git patches only (env vars already set by Step 0d3)
-# If config-server hasn't restarted since Step 0d3, patches are still there.
-# If it has restarted (e.g., from a dependent service restart), re-apply them.
-echo "  10a. Re-applying config-server git patches (no restart)..."
-bash "$SCRIPT_DIR/configure-config-server.sh" --patches-only
+# 10a. (Retired) Git patches no longer needed — all overrides are in env vars.
+# configure-config-server.sh is restart-safe; no re-application needed.
+
+# 10a2. Auto-approve partners that are stuck in InProgress state.
+# v1.3.0 requires admin approval; the test rig expects auto-approval.
+echo "  10a2. Auto-approving InProgress partners..."
+PGPASS=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d 2>/dev/null)
+kubectl -n postgres exec postgres-postgresql-0 -- env PGPASSWORD="$PGPASS" psql -U postgres -d mosip_pms -c \
+  "UPDATE pms.partner SET approval_status = 'approved', is_active = true WHERE approval_status = 'InProgress';" 2>/dev/null || true
 
 # 10c. JVM heap + memory for OOM-prone services
 echo "  10c. JVM heap + memory limits..."

@@ -2,20 +2,19 @@
 ##############################################################################
 # configure-config-server.sh — Single source of truth for config-server setup
 #
-# Sets ALL persistent env var overrides and ephemeral git clone patches
-# in ONE operation. This avoids the "multiple restarts lose git patches"
-# problem that occurs when different scripts modify config-server independently.
+# Sets ALL persistent env var overrides in ONE operation. No ephemeral git
+# clone patches — everything is in env vars or SPRING_APPLICATION_JSON.
+# Config-server can restart freely without losing state.
 #
 # DESIGN:
-#   1. Collect ALL env var overrides into one batch
-#   2. Apply them in a single `kubectl set env` (triggers exactly ONE restart)
+#   1. Resolve dynamic secrets from K8s secrets (postgres, minio)
+#   2. Apply ALL env var overrides in a single `kubectl set env` (ONE restart)
 #   3. Wait for config-server to be Ready
-#   4. Apply git clone patches ONCE
-#   5. NEVER touch config-server env vars again
+#   4. Disable nginx upstream retries
+#   5. Restart all services to refresh cached Keycloak tokens
 #
 # USAGE:
-#   bash configure-config-server.sh              # full setup
-#   bash configure-config-server.sh --patches-only  # re-apply git patches (no restart)
+#   bash configure-config-server.sh
 #
 # CALLED BY: install-services.sh, install-apitestrig.sh, reset-and-deploy.sh
 # These scripts should NEVER set config-server env vars directly.
@@ -23,19 +22,17 @@
 
 set -euo pipefail
 
-PATCHES_ONLY=false
-[ "${1:-}" = "--patches-only" ] && PATCHES_ONLY=true
-
 NS=config-server
 
 # ─── Resolve dynamic values ────────────────────────────────────────────────
 
 PGPASS=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d 2>/dev/null || echo "")
+MINIO_PASS=$(kubectl -n minio get secret minio -o jsonpath='{.data.root-password}' | base64 -d 2>/dev/null || echo "")
 
 # ─── Step 1: Persistent env var overrides (ONE batch) ──────────────────────
 
-if [ "$PATCHES_ONLY" = false ]; then
-  echo "  Setting ALL config-server persistent overrides (single restart)..."
+echo "  Setting ALL config-server persistent overrides (single restart)..."
+{
 
   # Remove .git suffix from git URI (prevents property source name mismatch)
   CURRENT_URI=$(kubectl -n $NS get deployment config-server -o jsonpath='{.spec.template.spec.containers[0].env}' 2>/dev/null \
@@ -84,6 +81,16 @@ if [ "$PATCHES_ONLY" = false ]; then
     `# --- Biosdk URL fix (default has wrong path) ---` \
     "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_IDREPO_BIO__EXTRACTOR__SERVICE_REST_URI=http://biosdk-service.biosdk/biosdk-service/extract-template" \
     \
+    `# --- MinIO/S3 credentials and bucket fix ---` \
+    `# Default config has minioadmin/minioadmin and s3a:// prefix on bucket name` \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_S3_ACCESSKEY=admin" \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_S3_SECRETKEY=$MINIO_PASS" \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_S3_PRETEXT_VALUE=" \
+    \
+    `# --- JDBC driver (missing from keygen config, causes NPE) ---` \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_JAVAX_PERSISTENCE_JDBC_DRIVER=org.postgresql.Driver" \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_JAVAX_PERSISTENCE_JDBC_DRIVERCLASSNAME=org.postgresql.Driver" \
+    \
     `# --- UIN/VID pool thresholds (200K default takes hours on constrained nodes) ---` \
     "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_KERNEL_UIN_MIN__UNUSED__THRESHOLD_OVERRIDE=1000" \
     "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_KERNEL_VID_MIN__UNUSED__THRESHOLD_OVERRIDE=1000" \
@@ -92,98 +99,37 @@ if [ "$PATCHES_ONLY" = false ]; then
     'SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_REGPROC_PACKET_CLASSIFIER_TAGGING_AGEGROUP_RANGES={"INFANT":"0-5","MINOR":"6-17","ADULT":"18-200"}' \
     \
     `# --- SPRING_APPLICATION_JSON for properties that can't be env vars ---` \
-    `# Includes: hyphenated names, underscore names (hibernate), etc.` \
-    'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"ara,fra","mosip.kernel.otp.expiry-time":"10","hibernate.cache.use_second_level_cache":"false","hibernate.cache.use_query_cache":"false"}}}}}}' \
+    `# Includes: hyphenated names, underscore names (hibernate), admin batch delimiters` \
+    'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"ara,fra","mosip.kernel.otp.expiry-time":"10","hibernate.cache.use_second_level_cache":"false","hibernate.cache.use_query_cache":"false","mosip.admin.batch.line.delimiter":",","mosip.admin.batch.name.delimiter":","}}}}}}' \
     2>/dev/null
 
   echo "  Waiting for config-server restart..."
   kubectl -n $NS rollout status deployment/config-server --timeout=180s 2>/dev/null
   echo "  Config-server restarted with all overrides."
-fi
+}
 
-# ─── Step 2: Wait for git clone to complete ────────────────────────────────
+# ─── Step 2: (Retired) Git clone patches ─────────────────────────────────
+# All config overrides are now in env vars or SPRING_APPLICATION_JSON above.
+# No ephemeral git clone patches needed. Config-server can restart freely.
 
-echo "  Waiting for git clone..."
-sleep 20
-
-# ─── Step 3: Apply git clone patches (ephemeral but only done ONCE) ────────
-
-echo "  Applying git clone patches..."
-kubectl -n $NS exec deploy/config-server -c config-server -- sh -c '
-PATCHED=0
-for REPO in /tmp/config-repo-*/; do
-  [ -d "$REPO" ] || continue
-
-  # Optional languages = empty
-  sed -i "s/^mosip.optional-languages=.*/mosip.optional-languages=/" "$REPO/application-default.properties" 2>/dev/null
-
-  # OTP expiry 10s (test rig reads from git source, not overrides)
-  sed -i "s/^mosip.kernel.otp.expiry-time=.*/mosip.kernel.otp.expiry-time=10/" "$REPO/application-default.properties" 2>/dev/null
-
-  # Enable Hibernate L2 cache (improves warm performance after first queries)
-  # NOTE: With refreshRate=0, this only takes effect if config-server is restarted
-  # AFTER this patch. The env var restart in Step 1 handles this.
-  sed -i "s/hibernate.cache.use_second_level_cache=false/hibernate.cache.use_second_level_cache=true/" "$REPO/kernel-default.properties" 2>/dev/null
-  sed -i "s/hibernate.cache.use_query_cache=false/hibernate.cache.use_query_cache=true/" "$REPO/kernel-default.properties" 2>/dev/null
-
-  # Biosdk URL fix in id-repository properties
-  sed -i "s|/biosdk-service/{extractionFormat}/extracttemplates|/biosdk-service/extract-template|" "$REPO/id-repository-default.properties" 2>/dev/null
-
-  # Admin batch delimiter: pipe → comma
-  grep -q "mosip.admin.batch.line.delimiter=," "$REPO/admin-default.properties" 2>/dev/null || \
-    echo "mosip.admin.batch.line.delimiter=," >> "$REPO/admin-default.properties"
-  grep -q "mosip.admin.batch.name.delimiter=," "$REPO/admin-default.properties" 2>/dev/null || \
-    echo "mosip.admin.batch.name.delimiter=," >> "$REPO/admin-default.properties"
-
-  # Add mosip-testrig-client to allowed audience in ALL property files that have it
-  for f in id-authentication-internal-default.properties \
-           id-authentication-default.properties \
-           id-repository-default.properties \
-           kernel-default.properties \
-           partner-management-default.properties \
-           data-share-default.properties \
-           admin-default.properties \
-           hotlist-default.properties \
-           digital-card-default.properties \
-           registration-processor-default.properties \
-           pre-registration-default.properties \
-           resident-default.properties \
-           syncdata-default.properties \
-           packet-manager-default.properties; do
-    if [ -f "$REPO/$f" ] && grep -q "^auth.server.admin.allowed.audience=" "$REPO/$f" && \
-       ! grep -q "mosip-testrig-client" "$REPO/$f"; then
-      sed -i "s/^auth.server.admin.allowed.audience=.*/&,mosip-testrig-client/" "$REPO/$f"
-    fi
-  done
-
-  PATCHED=$((PATCHED + 1))
-done
-echo "Patched $PATCHED config repos"
-' 2>/dev/null
-
-# Force config-server to re-read the patched git clone files
-kubectl -n $NS exec deploy/config-server -c config-server -- \
-  wget -q -O /dev/null --timeout=5 --post-data="" "http://localhost:8088/config-server/actuator/refresh" 2>/dev/null || true
-
-# ─── Step 4: Disable nginx upstream retries ─────────────────────────────────
+# ─── Step 3: Disable nginx upstream retries ──────────────────────────────────
 # Without this, nginx retries timed-out requests on the same backend forever,
 # and the test rig client never gets a response (even a 504).
 echo "  Disabling nginx upstream retries..."
 kubectl -n ingress-nginx patch cm ingress-nginx-controller --type merge \
   -p '{"data":{"proxy-next-upstream":"off","proxy-next-upstream-tries":"1"}}' 2>/dev/null || true
 
-# ─── Step 5: Restart all kernel services to refresh Keycloak tokens ─────────
+# ─── Step 4: Restart all services to refresh cached Keycloak tokens ──────────
 # After config-server changes, services have stale cached Keycloak tokens.
 # Most critically, auditmanager's token becomes invalid which causes every
 # masterdata write/update API call to block for 180s (the audit retry timeout).
-# This single issue caused ALL tests to hang on the fresh deployment.
-echo "  Restarting kernel + IDA services (token refresh)..."
+# Datashare must also restart to pick up corrected S3 credentials and keycloak URL.
+echo "  Restarting all services (token + config refresh)..."
 kubectl -n kernel rollout restart deployment --all 2>/dev/null || true
 kubectl -n idrepo rollout restart deployment --all 2>/dev/null || true
 kubectl -n ida rollout restart deployment --all 2>/dev/null || true
 kubectl -n pms rollout restart deployment --all 2>/dev/null || true
 kubectl -n admin rollout restart deployment --all 2>/dev/null || true
+kubectl -n datashare rollout restart deployment --all 2>/dev/null || true
 
-echo "  Config-server fully configured."
-echo "  WARNING: Do not set env vars on config-server after this point."
-echo "           Use configure-config-server.sh to add new overrides."
+echo "  Config-server fully configured (all overrides in env vars, restart-safe)."
