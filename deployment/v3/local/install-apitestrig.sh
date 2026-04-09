@@ -1088,6 +1088,13 @@ FROM keymgr.key_store WHERE id = (SELECT id FROM keymgr.key_alias WHERE app_id='
 ON CONFLICT DO NOTHING;
 " 2>/dev/null || true
 
+# 10a5. Increase datashare transactionsAllowed from 2 to 100.
+# The credential pipeline uses 3 transactions per credential (create + websub-read + IDA-read).
+# Default of 2 causes "Data share usage expired" when IDA tries to fetch.
+echo "  10a5. Increasing datashare transactionsAllowed..."
+kubectl -n postgres exec postgres-postgresql-0 -- env PGPASSWORD="$PGPASS" psql -U postgres -d mosip_pms -c \
+  "UPDATE pms.auth_policy SET policy_file_id = replace(policy_file_id, '\"transactionsAllowed\":\"2\"', '\"transactionsAllowed\":\"100\"') WHERE policy_file_id LIKE '%transactionsAllowed%';" 2>/dev/null || true
+
 # 10c. JVM heap + memory for OOM-prone services
 echo "  10c. JVM heap + memory limits..."
 kubectl -n keymanager patch deployment keymanager --type='json' -p='[

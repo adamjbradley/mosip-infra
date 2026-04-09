@@ -531,6 +531,22 @@ spec:
 KEYGEN_JOB
   kubectl -n $NS wait --for=condition=complete job/keygen-zk --timeout=600s
   echo "  Keygen completed (master keys + ZK encryption keys generated)."
+
+  # Copy key tables from mosip_keymgr to mosip_ida.
+  # On local dev, IDA uses softhsm-kernel (single HSM). IDA's embedded keymanager
+  # reads from mosip_ida.ida.key_alias/key_store/data_encrypt_keystore, but the keys
+  # were generated in mosip_keymgr. Without this copy, IDA gets KER-KMS-024 thumbprint
+  # mismatch and KER-ZKC-006 invalid random key errors.
+  echo "  Copying key tables from mosip_keymgr to mosip_ida..."
+  local PGPASS
+  PGPASS=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d 2>/dev/null)
+  kubectl -n postgres exec postgres-postgresql-0 -- bash -c "
+    PGPASSWORD='$PGPASS' psql -U postgres -d mosip_ida -c 'TRUNCATE ida.key_alias CASCADE; TRUNCATE ida.key_store CASCADE; TRUNCATE ida.data_encrypt_keystore CASCADE;' 2>/dev/null
+    PGPASSWORD='$PGPASS' pg_dump -U postgres -d mosip_keymgr -t keymgr.key_alias -t keymgr.key_store -t keymgr.data_encrypt_keystore --data-only --column-inserts 2>/dev/null \
+      | sed 's/keymgr\\./ida./g' \
+      | PGPASSWORD='$PGPASS' psql -U postgres -d mosip_ida 2>/dev/null | tail -1
+  " 2>/dev/null
+  echo "  Key tables copied to mosip_ida."
 }
 
 # ---------- Layer 3: kernel ----------
@@ -601,6 +617,25 @@ install_websub() {
   echo "=== Layer 5: websub ==="
   local NS=websub
   setup_ns $NS
+
+  # Purge stale websub metadata from Kafka.
+  # On fresh deployment or after keycloak-init re-runs, the hub.secret.encryption.key
+  # changes. Stale subscriber entries encrypted with the old key cause "AES Tag mismatch"
+  # at websub startup, preventing Kafka consumer creation for content topics.
+  echo "  Purging stale websub Kafka metadata topics..."
+  for TOPIC in consolidated-websub-topics consolidated-websub-subscribers registered-websub-topics registered-websub-subscribers; do
+    local PARTITIONS
+    PARTITIONS=$(kubectl -n kafka exec kafka-0 -- kafka-run-class.sh kafka.tools.GetOffsetShell \
+      --broker-list localhost:9092 --topic "$TOPIC" 2>/dev/null | wc -l)
+    if [ "$PARTITIONS" -gt 0 ]; then
+      for PART in $(seq 0 $((PARTITIONS - 1))); do
+        echo "{\"partitions\":[{\"topic\":\"$TOPIC\",\"partition\":$PART,\"offset\":-1}],\"version\":1}" | \
+          kubectl -n kafka exec -i kafka-0 -- sh -c 'cat > /tmp/purge.json && kafka-delete-records.sh --bootstrap-server localhost:9092 --offset-json-file /tmp/purge.json' 2>/dev/null
+      done
+    fi
+  done
+  echo "  Websub metadata topics purged."
+
   for svc in websub-consolidator websub; do
     helm_install $NS "$svc" "$svc"
     skip_cacerts_init $NS "$svc"
@@ -637,7 +672,10 @@ install_datashare() {
   echo "=== Layer 5: datashare ==="
   local NS=datashare
   setup_ns $NS
-  helm_install $NS datashare datashare
+  # Datashare needs more memory — OOMKilled at 1Gi under credential pipeline load
+  helm_install $NS datashare datashare \
+    --set resources.limits.memory=2Gi \
+    --set "additionalResources.javaOpts=-Xms256m -Xmx1g"
   skip_cacerts_init $NS datashare
   wait_ready $NS datashare
 }
