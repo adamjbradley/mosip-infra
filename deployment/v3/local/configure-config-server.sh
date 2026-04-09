@@ -98,6 +98,11 @@ echo "  Setting ALL config-server persistent overrides (single restart)..."
     `# --- Regproc agegroup config ---` \
     'SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_REGPROC_PACKET_CLASSIFIER_TAGGING_AGEGROUP_RANGES={"INFANT":"0-5","MINOR":"6-17","ADULT":"18-200"}' \
     \
+    `# --- IDA base keys in softhsm-kernel (local dev uses single HSM) ---` \
+    `# On production, IDA has its own HSM (softhsm-ida). On local dev, we use softhsm-kernel` \
+    `# for ALL services. These base keys are needed for ZK encryption and datashare.` \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_KERNEL_KEYMANAGER_AUTOGEN_BASEKEYS_LIST=RESIDENT:mpartner-default-resident,COMPLIANCE_TOOLKIT:COMP-FIR,IDA:PUBLIC_KEY,IDA:mpartner-default-auth,IDA:INTERNAL,IDA:PARTNER,IDA:IDA-FIR,IDA:CRED_SERVICE" \
+    \
     `# --- SPRING_APPLICATION_JSON for properties that can't be env vars ---` \
     `# Includes: hyphenated names, underscore names (hibernate), admin batch delimiters` \
     'SPRING_APPLICATION_JSON={"spring":{"cloud":{"config":{"server":{"overrides":{"mosip.optional-languages":"ara,fra","mosip.kernel.otp.expiry-time":"10","hibernate.cache.use_second_level_cache":"false","hibernate.cache.use_query_cache":"false","mosip.admin.batch.line.delimiter":",","mosip.admin.batch.name.delimiter":","}}}}}}' \
