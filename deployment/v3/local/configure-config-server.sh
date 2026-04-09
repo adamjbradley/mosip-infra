@@ -101,7 +101,7 @@ echo "  Setting ALL config-server persistent overrides (single restart)..."
     `# --- IDA base keys in softhsm-kernel (local dev uses single HSM) ---` \
     `# On production, IDA has its own HSM (softhsm-ida). On local dev, we use softhsm-kernel` \
     `# for ALL services. These base keys are needed for ZK encryption and datashare.` \
-    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_KERNEL_KEYMANAGER_AUTOGEN_BASEKEYS_LIST=RESIDENT:mpartner-default-resident,COMPLIANCE_TOOLKIT:COMP-FIR,IDA:PUBLIC_KEY,IDA:mpartner-default-auth,IDA:INTERNAL,IDA:PARTNER,IDA:IDA-FIR,IDA:CRED_SERVICE" \
+    "SPRING_CLOUD_CONFIG_SERVER_OVERRIDES_MOSIP_KERNEL_KEYMANAGER_AUTOGEN_BASEKEYS_LIST=RESIDENT:mpartner-default-resident,COMPLIANCE_TOOLKIT:COMP-FIR,IDA:PUBLIC_KEY,IDA:mpartner-default-auth,IDA:INTERNAL,IDA:PARTNER,IDA:IDA-FIR,IDA:CRED_SERVICE,PARTNER:mpartner-default-auth" \
     \
     `# --- SPRING_APPLICATION_JSON for properties that can't be env vars ---` \
     `# Includes: hyphenated names, underscore names (hibernate), admin batch delimiters` \

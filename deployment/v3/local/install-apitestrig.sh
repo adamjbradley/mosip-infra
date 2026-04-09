@@ -991,12 +991,102 @@ echo "=== Step 10: Applying performance optimizations ==="
 # 10a. (Retired) Git patches no longer needed — all overrides are in env vars.
 # configure-config-server.sh is restart-safe; no re-application needed.
 
-# 10a2. Auto-approve partners that are stuck in InProgress state.
+# 10a2. Auto-approve partners: fix existing InProgress + install trigger for future inserts.
 # v1.3.0 requires admin approval; the test rig expects auto-approval.
-echo "  10a2. Auto-approving InProgress partners..."
+echo "  10a2. Auto-approving InProgress partners + installing auto-approve trigger..."
 PGPASS=$(kubectl -n postgres get secret postgres-postgresql -o jsonpath='{.data.postgresql-password}' | base64 -d 2>/dev/null)
 kubectl -n postgres exec postgres-postgresql-0 -- env PGPASSWORD="$PGPASS" psql -U postgres -d mosip_pms -c \
   "UPDATE pms.partner SET approval_status = 'approved', is_active = true WHERE approval_status = 'InProgress';" 2>/dev/null || true
+# Install a trigger so future partner registrations are auto-approved (no admin UI needed)
+kubectl -n postgres exec postgres-postgresql-0 -- env PGPASSWORD="$PGPASS" psql -U postgres -d mosip_pms -c "
+CREATE OR REPLACE FUNCTION pms.auto_approve_partner() RETURNS TRIGGER AS \$\$
+BEGIN
+  NEW.approval_status := 'approved';
+  NEW.is_active := true;
+  RETURN NEW;
+END;
+\$\$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_auto_approve ON pms.partner;
+CREATE TRIGGER trg_auto_approve BEFORE INSERT ON pms.partner FOR EACH ROW EXECUTE FUNCTION pms.auto_approve_partner();
+" 2>/dev/null || true
+
+# 10a3. Partner-onboarder with socat sidecar.
+# Node.js resolves .localhost to 127.0.0.1 (RFC 6761), socat redirects to ingress.
+# Also needs NODE_TLS_REJECT_UNAUTHORIZED=0 for self-signed certs.
+echo "  10a3. Running partner-onboarder (socat sidecar for .localhost resolution)..."
+INGRESS_IP=$(kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+kubectl create ns onboarder 2>/dev/null || true
+# Copy standard configmaps/secrets into onboarder namespace
+for cm in global config-server-share artifactory-share; do
+  kubectl -n kernel get configmap $cm -o yaml 2>/dev/null | sed "s/namespace: kernel/namespace: onboarder/" | kubectl apply -f - 2>/dev/null || true
+done
+# Fetch fresh keycloak-client-secrets from Keycloak into onboarder namespace
+if kubectl -n keycloak get secret keycloak-client-secrets &>/dev/null; then
+  kubectl -n keycloak get secret keycloak-client-secrets -o yaml \
+    | sed "s/namespace: keycloak/namespace: onboarder/" \
+    | kubectl apply -n onboarder -f - 2>/dev/null || true
+fi
+# Run partner-onboarder as a Job with socat sidecar
+kubectl -n onboarder delete job partner-onboarder 2>/dev/null || true
+cat <<ONBOARDER_JOB | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: partner-onboarder
+  namespace: onboarder
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: onboarder
+        image: mosipid/partner-onboarder:1.3.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_TLS_REJECT_UNAUTHORIZED
+          value: "0"
+        envFrom:
+        - configMapRef:
+            name: global
+        - configMapRef:
+            name: config-server-share
+        - configMapRef:
+            name: artifactory-share
+        - secretRef:
+            name: keycloak-client-secrets
+            optional: true
+      - name: socat
+        image: alpine/socat:1.7.4.4
+        args: ["TCP-LISTEN:80,fork,reuseaddr", "TCP:${INGRESS_IP}:80"]
+      hostAliases:
+      - ip: "127.0.0.1"
+        hostnames:
+        - api-internal.mosip.localhost
+        - iam.mosip.localhost
+ONBOARDER_JOB
+echo "  Waiting for partner-onboarder (up to 10 min)..."
+kubectl -n onboarder wait --for=condition=complete job/partner-onboarder --timeout=600s 2>/dev/null || {
+  echo "  WARNING: partner-onboarder did not complete — check logs: kubectl -n onboarder logs job/partner-onboarder"
+}
+
+# 10a4. Create PARTNER:mpartner-default-auth key in keymgr DB.
+# Partner-onboarder registers partners which need the PARTNER:mpartner-default-auth key.
+# This key is identical to IDA:mpartner-default-auth but with app_id=PARTNER.
+# Keygen won't generate it (PARTNER domain is restricted), so we copy from IDA.
+echo "  10a4. Creating PARTNER:mpartner-default-auth key from IDA key..."
+kubectl -n postgres exec postgres-postgresql-0 -- env PGPASSWORD="$PGPASS" psql -U postgres -d mosip_keymgr -c "
+INSERT INTO keymgr.key_alias (id, app_id, ref_id, key_gen_dtimes, key_expire_dtimes, cr_by, cr_dtimes, cert_thumbprint, uni_ident)
+SELECT gen_random_uuid(), 'PARTNER', ref_id, key_gen_dtimes, key_expire_dtimes, cr_by, now(), cert_thumbprint, 'PARTNER_' || uni_ident
+FROM keymgr.key_alias WHERE app_id = 'IDA' AND ref_id = 'mpartner-default-auth'
+ON CONFLICT DO NOTHING;
+
+INSERT INTO keymgr.key_store (id, master_key, private_key, certificate_data, cr_by, cr_dtimes)
+SELECT (SELECT id FROM keymgr.key_alias WHERE app_id='PARTNER' AND ref_id='mpartner-default-auth'), master_key, private_key, certificate_data, cr_by, now()
+FROM keymgr.key_store WHERE id = (SELECT id FROM keymgr.key_alias WHERE app_id='IDA' AND ref_id='mpartner-default-auth')
+ON CONFLICT DO NOTHING;
+" 2>/dev/null || true
 
 # 10c. JVM heap + memory for OOM-prone services
 echo "  10c. JVM heap + memory limits..."
