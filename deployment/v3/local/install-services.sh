@@ -642,8 +642,71 @@ install_ida() {
   setup_ns $NS
   copy_cm softhsm-ida-share softhsm $NS 2>/dev/null || true
 
-  # IDA key generation (uses ida profile, not kernel)
-  echo "  Skipping ida-keygen (keys generated on first use)..."
+  # IDA keygen — generates IDA master keys + base keys in softhsm-ida.
+  # Uses id-authentication config for the autogen list but needs softhsm-ida-share.
+  # Also adds IDA:PUBLIC_KEY via JVM override (needed for ZK encryption by keymanager).
+  echo "  Running IDA keygen..."
+  kubectl -n $NS delete job ida-keygen 2>/dev/null || true
+  cat <<'IDA_KEYGEN_JOB' | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ida-keygen
+  namespace: ida
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: keygen
+        image: mosipid/keys-generator:1.3.0
+        imagePullPolicy: IfNotPresent
+        command: ["./configure_start.sh"]
+        args:
+        - "java"
+        - "-jar"
+        - "-Dloader.path=/home/mosip/additional_jars/"
+        - "-Dspring.cloud.config.label=v1.3.0"
+        - "-Dspring.cloud.config.name=id-authentication"
+        - "-Dspring.profiles.active=default"
+        - "-Dspring.cloud.config.uri=http://config-server.config-server/config"
+        - "-Dspring.datasource.driver-class-name=org.postgresql.Driver"
+        - "-Dmosip.kernel.zkcrypto.publickey.reference.id=PUBLIC_KEY"
+        - "./keys-generator.jar"
+        env:
+        - name: container_user
+          value: "mosip"
+        - name: JDK_JAVA_OPTIONS
+          value: "-Xms512m -Xmx2g -Dspring.datasource.driver-class-name=org.postgresql.Driver"
+        - name: work_dir
+          value: "/home/mosip"
+        - name: hsm_local_dir_name
+          value: "hsm-client"
+        - name: loader_path_env
+          value: "/home/mosip/additional_jars/"
+        - name: spring_config_name_env
+          value: "id-authentication"
+        - name: mosip_role
+          value: "keygen"
+        envFrom:
+        - configMapRef:
+            name: global
+        - configMapRef:
+            name: config-server-share
+        - configMapRef:
+            name: artifactory-share
+        - configMapRef:
+            name: softhsm-ida-share
+        resources:
+          requests:
+            memory: "1Gi"
+          limits:
+            memory: "3Gi"
+IDA_KEYGEN_JOB
+  kubectl -n $NS wait --for=condition=complete job/ida-keygen --timeout=600s
+  echo "  IDA keygen completed."
 
   for svc in ida-auth ida-internal ida-otp; do
     # IDA services need more memory — OOMKilled at 1Gi default
